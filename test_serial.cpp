@@ -157,6 +157,7 @@ public:
     }
 };
 
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "US-Builder Serial Test Program" << std::endl;
@@ -180,66 +181,52 @@ int main() {
     std::cout << "\n⚠️  If connection fails, update portName in test_serial.cpp" << std::endl;
     std::cout << "========================================\n" << std::endl;
     
-    try {
-        // Connect to device
-        SimpleSerial serial(portName);
-        
-        // Test 1: Get firmware version
-        std::string version;
-        if (!serial.requestFirmware(version)) {
-            std::cerr << "\n❌ Firmware test failed" << std::endl;
-            return 1;
-        }
-        
-        // Test 2: Get A-scan
-        std::vector<unsigned char> samples;
-        if (!serial.requestAscan8bit(512, samples)) {
-            std::cerr << "\n❌ A-scan test failed" << std::endl;
-            return 1;
-        }
-        
-        // Display first 10 samples
-        std::cout << "\n📊 First 10 sample values: ";
-        for (int i = 0; i < 10 && i < (int)samples.size(); i++) {
-            std::cout << (int)samples[i] << " ";
-        }
-        std::cout << std::endl;
-        
-        // Calculate some basic stats
-        int minVal = 255, maxVal = 0;
-        long long sum = 0;
-        for (unsigned char s : samples) {
-            minVal = std::min(minVal, (int)s);
-            maxVal = std::max(maxVal, (int)s);
-            sum += s;
-        }
-        double avg = sum / (double)samples.size();
-        
-        std::cout << "\n📈 A-scan statistics:" << std::endl;
-        std::cout << "   Samples: " << samples.size() << std::endl;
-        std::cout << "   Min: " << minVal << std::endl;
-        std::cout << "   Max: " << maxVal << std::endl;
-        std::cout << "   Avg: " << avg << std::endl;
-        
-        std::cout << "\n========================================" << std::endl;
-        std::cout << "✅ All tests passed!" << std::endl;
-        std::cout << "========================================" << std::endl;
-        
-    } catch (std::exception& e) {
-        std::cerr << "\n❌ Exception: " << e.what() << std::endl;
-        std::cerr << "\nTroubleshooting:" << std::endl;
-        std::cerr << "  1. Check device is connected and powered on" << std::endl;
-        std::cerr << "  2. Verify correct port name:" << std::endl;
-#ifdef _WIN32
-        std::cerr << "     Windows: Get-PnpDevice -Class Ports" << std::endl;
-#elif __APPLE__
-        std::cerr << "     macOS: ls /dev/tty.*" << std::endl;
-#else
-        std::cerr << "     Linux: ls /dev/ttyUSB* /dev/ttyACM*" << std::endl;
-#endif
-        std::cerr << "  3. Check permissions (may need sudo on Linux/macOS)" << std::endl;
+   
+    // Connect to device
+    SimpleSerial serial(portName);
+    
+    // Test 1: Get firmware version
+    std::string version;
+    if (!serial.requestFirmware(version)) {
+        std::cerr << "\n❌ Firmware test failed" << std::endl;
         return 1;
     }
+    
+    // Test 2: Get A-scan
+    std::vector<unsigned char> samples;
+    if (!serial.requestAscan8bit(512, samples)) {
+        std::cerr << "\n❌ A-scan test failed" << std::endl;
+        return 1;
+    }
+    
+    // Display first 10 samples
+    std::cout << "\n📊 First 10 sample values: ";
+    for (int i = 0; i < 10 && i < (int)samples.size(); i++) {
+        std::cout << (int)samples[i] << " ";
+    }
+    std::cout << std::endl;
+    
+    // Calculate some basic stats
+    int minVal = 255, maxVal = 0;
+    long long sum = 0;
+    for (unsigned char s : samples) {
+        minVal = std::min(minVal, (int)s);
+        maxVal = std::max(maxVal, (int)s);
+        sum += s;
+    }
+    double avg = sum / (double)samples.size();
+    
+    std::cout << "\n📈 A-scan statistics:" << std::endl;
+    std::cout << "   Samples: " << samples.size() << std::endl;
+    std::cout << "   Min: " << minVal << std::endl;
+    std::cout << "   Max: " << maxVal << std::endl;
+    std::cout << "   Avg: " << avg << std::endl;
+    
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "✅ All tests passed!" << std::endl;
+    std::cout << "========================================" << std::endl;
+    
+
     
     return 0;
 }

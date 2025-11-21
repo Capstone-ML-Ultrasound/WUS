@@ -1,6 +1,6 @@
 # Compiler settings
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall
+CXXFLAGS = -std=c++17 -Wall -Iinclude
 
 # Platform detection
 UNAME_S := $(shell uname -s)
@@ -9,7 +9,7 @@ UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
     # macOS (Homebrew)
     BOOST_ROOT = /opt/homebrew/opt/boost
-    PORT_EXAMPLE = /dev/tty.usbserial-0001
+    PORT_EXAMPLE = /dev/tty.usbmodem31101
     PLATFORM = macOS
     INSTALL_CMD = brew install boost
 else ifeq ($(UNAME_S),Linux)
@@ -21,7 +21,7 @@ else ifeq ($(UNAME_S),Linux)
 else
     # Windows (MinGW)
     BOOST_ROOT = C:/vcpkg/installed/x64-windows
-    PORT_EXAMPLE = COM3
+    PORT_EXAMPLE = COM4
     PLATFORM = Windows
     INSTALL_CMD = vcpkg install boost-asio:x64-windows
 endif
@@ -29,12 +29,12 @@ endif
 # Include and library paths
 CXXFLAGS += -I$(BOOST_ROOT)/include
 
-# Base linker flags (always include pthread and library path)
+# Base linker flags
 LDFLAGS = -L$(BOOST_ROOT)/lib -pthread
 
-# On non-macOS platforms add boost_system library
+# On non-macOS platforms, add boost_system library
 ifeq ($(UNAME_S),Darwin)
-    # macOS: do NOT link -lboost_system (header-only)
+    # macOS: do NOT link -lboost_system
 else
     LDFLAGS += -lboost_system
 endif
@@ -45,7 +45,11 @@ INCDIR = include
 BUILDDIR = build
 
 # App name
-APPNAME = test_serial
+APPNAME = us_acq
+
+# Sources and objects
+SRC = $(wildcard $(SRCDIR)/*.cpp)
+OBJ = $(patsubst $(SRCDIR)/%.cpp, $(BUILDDIR)/%.o, $(SRC))
 
 # Default target
 all: check-deps $(APPNAME)
@@ -63,39 +67,37 @@ check-deps:
 		echo "Installation instructions:"; \
 		echo "   $(INSTALL_CMD)"; \
 		echo ""; \
-		if [ "$(PLATFORM)" = "macOS" ]; then \
-			echo "   If Homebrew is not installed:"; \
-			echo "   /bin/bash -c \"\$$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""; \
-		elif [ "$(PLATFORM)" = "Windows" ]; then \
-			echo "   If vcpkg is not installed:"; \
-			echo "   git clone https://github.com/microsoft/vcpkg"; \
-			echo "   cd vcpkg && bootstrap-vcpkg.bat"; \
-			echo "   vcpkg integrate install"; \
-		fi; \
-		echo ""; \
 		exit 1; \
 	fi
 	@echo "Boost found at $(BOOST_ROOT)"
 	@echo ""
 	@echo "Example serial port for $(PLATFORM): $(PORT_EXAMPLE)"
-	@echo "   Update portName in test_serial.cpp if needed"
+	@echo "   Update portName in main.cpp if needed"
 	@echo ""
 	@echo "=========================================="
 
-
-# Build test_serial
-$(APPNAME): test_serial.cpp
-	@echo "Building $(APPNAME)..."
-	$(CXX) $(CXXFLAGS) -o $(APPNAME) test_serial.cpp $(LDFLAGS)
+# Link step
+$(APPNAME): $(OBJ)
+	@echo "Linking $(APPNAME)..."
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 	@echo "Build successful!"
 	@echo ""
 	@echo "Run with: ./$(APPNAME)"
 	@echo ""
 
+# Compile step (make sure build dir exists)
+$(BUILDDIR)/%.o: $(SRCDIR)/%.cpp | $(BUILDDIR)
+	@echo "Compiling $<..."
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# Create build directory if missing
+$(BUILDDIR):
+	mkdir -p $(BUILDDIR)
+
 # Clean
 clean:
 	@echo "Cleaning build artifacts..."
-	rm -f $(APPNAME) $(APPNAME).exe
+	rm -rf $(BUILDDIR) $(APPNAME) $(APPNAME).exe
 	@echo "Clean complete"
 
 # Help
@@ -106,9 +108,5 @@ help:
 	@echo "  make clean    - Remove build artifacts"
 	@echo "  make help     - Show this help message"
 	@echo ""
-	@echo "First time setup:"
-	@echo "  1. Install Boost: $(INSTALL_CMD)"
-	@echo "  2. Find your serial port:"
-	@echo "     $(PLATFORM): $(PORT_EXAMPLE)"
-	@echo "  3. Update portName in test_serial.cpp"
-	@echo "  4. Run: make"
+	@echo "Current platform: $(PLATFORM)"
+	@echo "Port example: $(PORT_EXAMPLE)"
