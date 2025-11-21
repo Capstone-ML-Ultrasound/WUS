@@ -12,32 +12,25 @@ ifeq ($(UNAME_S),Darwin)
     PORT_EXAMPLE = /dev/tty.usbmodem31101
     PLATFORM = macOS
     INSTALL_CMD = brew install boost
-else ifeq ($(UNAME_S),Linux)
-    # Linux
-    BOOST_ROOT = /usr
-    PORT_EXAMPLE = /dev/ttyUSB0
-    PLATFORM = Linux
-    INSTALL_CMD = sudo apt-get install libboost-all-dev
+    LDFLAGS = -L$(BOOST_ROOT)/lib -pthread
+else ifeq ($(findstring MINGW,$(UNAME_S)),MINGW)
+    # Windows (MinGW/MSYS2)
+    BOOST_ROOT = /mingw64
+    PORT_EXAMPLE = COM4
+    PLATFORM = Windows
+    INSTALL_CMD = pacman -S mingw-w64-x86_64-boost
+    LDFLAGS = -L/mingw64/lib -lws2_32 -lwsock32 -pthread
 else
-    # Windows (MinGW)
+    # Fallback Windows (vcpkg)
     BOOST_ROOT = C:/vcpkg/installed/x64-windows
     PORT_EXAMPLE = COM4
     PLATFORM = Windows
     INSTALL_CMD = vcpkg install boost-asio:x64-windows
+    LDFLAGS = -LC:/vcpkg/installed/x64-windows/lib -lboost_system-mt -lws2_32 -lwsock32 -pthread
 endif
 
-# Include and library paths
+# Include paths
 CXXFLAGS += -I$(BOOST_ROOT)/include
-
-# Base linker flags
-LDFLAGS = -L$(BOOST_ROOT)/lib -pthread
-
-# On non-macOS platforms, add boost_system library
-ifeq ($(UNAME_S),Darwin)
-    # macOS: do NOT link -lboost_system
-else
-    LDFLAGS += -lboost_system
-endif
 
 # Directories
 SRCDIR = src
@@ -62,16 +55,16 @@ check-deps:
 	@echo "=========================================="
 	@echo ""
 	@if [ ! -d "$(BOOST_ROOT)/include/boost" ]; then \
-		echo "ERROR: Boost not found at $(BOOST_ROOT)"; \
+		echo "❌ ERROR: Boost not found at $(BOOST_ROOT)"; \
 		echo ""; \
-		echo "Installation instructions:"; \
+		echo "📦 Installation instructions:"; \
 		echo "   $(INSTALL_CMD)"; \
 		echo ""; \
 		exit 1; \
 	fi
-	@echo "Boost found at $(BOOST_ROOT)"
+	@echo "✅ Boost found at $(BOOST_ROOT)"
 	@echo ""
-	@echo "Example serial port for $(PLATFORM): $(PORT_EXAMPLE)"
+	@echo "📍 Example serial port for $(PLATFORM): $(PORT_EXAMPLE)"
 	@echo "   Update portName in main.cpp if needed"
 	@echo ""
 	@echo "=========================================="
@@ -80,7 +73,7 @@ check-deps:
 $(APPNAME): $(OBJ)
 	@echo "Linking $(APPNAME)..."
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
-	@echo "Build successful!"
+	@echo "✅ Build successful!"
 	@echo ""
 	@echo "Run with: ./$(APPNAME)"
 	@echo ""
@@ -98,7 +91,7 @@ $(BUILDDIR):
 clean:
 	@echo "Cleaning build artifacts..."
 	rm -rf $(BUILDDIR) $(APPNAME) $(APPNAME).exe
-	@echo "Clean complete"
+	@echo "✅ Clean complete"
 
 # Help
 .PHONY: help
