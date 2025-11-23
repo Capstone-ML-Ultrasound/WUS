@@ -6,6 +6,18 @@
 #include <vector>
 
 
+std::string getDefaultPort() {
+#ifdef _WIN32
+    return "\\\\.\\COM4";
+#elif __APPLE__
+    return "/dev/tty.usbmodem1101";  // (TO CHECK) ls /dev | grep tty.usb
+#else
+    return "/dev/ttyUSB0";
+#endif
+}
+
+
+
 void test_firmware(USBuilder &dev){
     // Step 1: Get firmware version
     std::string version;
@@ -62,18 +74,7 @@ int main() {
     std::cout << "========================================\n" << std::endl;
 
     // Platform-specific port selection
-    std::string portName;
-
-#ifdef _WIN32
-    portName = "\\\\.\\COM4";  // Windows
-    std::cout << "Platform: Windows" << std::endl;
-#elif __APPLE__
-    portName = "/dev/tty.usbmodem1101";  // macOS (update as needed)
-    std::cout << "Platform: macOS" << std::endl;
-#else
-    portName = "/dev/ttyUSB0";  // Linux
-    std::cout << "Platform: Linux" << std::endl;
-#endif
+    std::string portName = getDefaultPort();
 
     std::cout << "Using port: " << portName << "\n" << std::endl;
 

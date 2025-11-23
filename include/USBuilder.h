@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 #include <memory>
-#include <boost/asio.hpp>   // include full asio definitions
+#include <boost/asio.hpp> 
 
 class USBuilder {
 public: 
