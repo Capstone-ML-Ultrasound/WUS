@@ -18,6 +18,10 @@ public:
     bool requestAscan8bit(int numPoints, std::vector<unsigned char>& outData);
     bool requestAscan8bitBurst(int numPoints, int numFrames, 
                                std::vector<std::vector<unsigned char>>& outData);
+
+    bool programSPIFunc2();
+    bool programSPIFunc4(int numPoints);
+
     
 private:
     std::string m_portName;

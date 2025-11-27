@@ -172,6 +172,7 @@ bool USBuilder::requestAscan8bit(int numPoints, std::vector<unsigned char>& outD
  */
 bool USBuilder::requestAscan8bitBurst(int numPoints, int numFrames,
                                       std::vector<std::vector<unsigned char>>& outBurstData) {
+
     if (numPoints <= 0 || numPoints > 4000) {
         std::cerr << "Invalid numPoints: " << numPoints << " (must be 1-4000)" << std::endl;
         return false;
@@ -200,4 +201,49 @@ bool USBuilder::requestAscan8bitBurst(int numPoints, int numFrames,
     }
 
     return true;
+}
+
+bool USBuilder::programSPIFunc2(){
+
+    unsigned char cmd[12] = {140, 140, 140, 140, 140, 0, 0, 0, 0, 0, 0, 0};
+
+    cmd[5] = 1;     // Write function 
+    cmd[6] = 1;     // # of params to be sent
+    cmd[7] = 2;     // Fct.2 = Sampling Request
+
+    if (!writeAll(cmd, sizeof(cmd))) {
+        std::cerr << "Failed to send trigger command" << std::endl;
+        return false;
+    }
+    
+    std::cout << "Acquisition triggered (Function 2)" << std::endl;
+    return true;
+}
+
+bool USBuilder::programSPIFunc4(int numpoints){
+
+    unsigned char cmd[12] = {140, 140, 140, 140, 140, 0, 0, 0, 0, 0, 0, 0};
+
+    cmd[5] = 1;                       // Write mode
+    cmd[6] = 3;                       // 3 parameters (func, lsb, msb)
+    cmd[7] = 4;                       // Function 4 (Auto Sampling Request)
+    cmd[8] = (numpoints >> 8) & 0xFF;  // high byte
+    cmd[9] = numpoints & 0xFF;         // low byte
+
+    // cmd[5] = 1;                        // Write mode
+    // cmd[6] = 3;                        // 3 parameters
+    // cmd[7] = numpoints & 0xFF;         // LSB first
+    // cmd[8] = (numpoints >> 8) & 0xFF;  // MSB second
+    // cmd[9] = 4;                        // Function number last
+
+    if (!writeAll(cmd, sizeof(cmd))) {
+        std::cerr << "Failed to send Function 4 auto-sampling command" << std::endl;
+        return false;
+    }
+
+    std::cout << "Auto-sampling enabled: will trigger after " 
+              << numpoints << " samples read (Function 4)" << std::endl;
+
+    return true;
+
 }
