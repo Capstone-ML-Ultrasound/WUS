@@ -78,7 +78,7 @@ int main() {
 
     bool running = true;
 
-    // poll Loop (Using your improved logic)
+    // poll Loop 
     while (running) {
         // Poll for messages (timeout 1000ms)
         rd_kafka_message_t *rkmessage = rd_kafka_consumer_poll(rk, 1000);
