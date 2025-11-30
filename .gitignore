@@ -1,0 +1,4 @@
+.vscode/
+build/
+kafka_data/
+*.exe
