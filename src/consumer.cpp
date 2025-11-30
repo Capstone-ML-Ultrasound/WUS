@@ -2,34 +2,28 @@
 #include <cstdlib>      // Required for exit
 #include <cstring>      // Required for string operations
 #include <unistd.h>     // Required for gethostname
+#include <vector>
 #include <librdkafka/rdkafka.h>
+#include "Utils.h"
 
 // Configuration constants
 const int MIN_COMMIT_COUNT = 100;
-
-// Placeholder function to simulate message processing
-void msg_process(rd_kafka_message_t *rkmessage) {
-    if (rkmessage->err) {
-        // If it's an error event (like partition EOF), print it
-        fprintf(stderr, "%% Message error: %s\n", rd_kafka_message_errstr(rkmessage));
-    } else {
-        // Actual message content
-        fprintf(stdout, "%% Message received (%.*s)\n",
-                (int)rkmessage->len, (char *)rkmessage->payload);
-    }
-}
+const int FLUSH_EVERY_FRAMES = 50; // write CSV every N frames
 
 int main() {
     char hostname[128];
     char errstr[512];
     int msg_count = 0; 
+    Utils utils;
+    std::vector<std::vector<unsigned char>> frameBuffer;
 
     // create configuration object
     rd_kafka_conf_t *conf = rd_kafka_conf_new();
 
     if (gethostname(hostname, sizeof(hostname)) != 0) {
-        fprintf(stderr, "%% Failed to lookup hostname\n");
-        exit(1);
+        fprintf(stderr, "%% Failed to lookup hostname, defaulting to localhost\n");
+        std::strncpy(hostname, "localhost", sizeof(hostname) - 1);
+        hostname[sizeof(hostname) - 1] = '\0';
     }
 
     // 2. Set configuration properties
@@ -46,6 +40,13 @@ int main() {
     }
 
     if (rd_kafka_conf_set(conf, "bootstrap.servers", "localhost:9092",
+                          errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) {
+        fprintf(stderr, "%% %s\n", errstr);
+        exit(1);
+    }
+
+    // Allow consumer to auto-create topic if it doesn't exist yet (relies on broker auto.create.topics.enable=true)
+    if (rd_kafka_conf_set(conf, "allow.auto.create.topics", "true",
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) {
         fprintf(stderr, "%% %s\n", errstr);
         exit(1);
@@ -86,7 +87,27 @@ int main() {
         if (!rkmessage)
             continue; 
 
-        msg_process(rkmessage); 
+        if (rkmessage->err) {
+            fprintf(stderr, "%% Message error: %s\n", rd_kafka_message_errstr(rkmessage));
+            rd_kafka_message_destroy(rkmessage);
+            continue;
+        }
+
+        // Capture payload into frame buffer
+        const unsigned char* payload = reinterpret_cast<const unsigned char*>(rkmessage->payload);
+        std::vector<unsigned char> frame(payload, payload + rkmessage->len);
+        frameBuffer.push_back(std::move(frame));
+
+        // Periodically flush frames to CSV
+        if (frameBuffer.size() >= FLUSH_EVERY_FRAMES) {
+            if (utils.writeBurstCSV(frameBuffer)) {
+                fprintf(stdout, "%% Wrote %zu frames to CSV\n", frameBuffer.size());
+                frameBuffer.clear();
+            } else {
+                fprintf(stderr, "%% Failed to write CSV\n");
+            }
+        }
+
         rd_kafka_message_destroy(rkmessage);
 
         // Commit offsets periodically

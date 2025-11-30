@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <iostream>
+#include <unistd.h>
 #include <signal.h> // For Ctrl+C handling
 #include <vector>
 #include <thread>
@@ -20,7 +21,7 @@ void signalHandler(int signum) {
 
 std::string getDefaultPort() {
 #ifdef _WIN32
-  return "\\\\.\\COM4";
+  return "\\\\.\\COM3";
 #elif __APPLE__
   return "/dev/tty.usbmodem1101"; // (TO CHECK) ls /dev | grep tty.usb
 #else
@@ -260,18 +261,20 @@ int main() {
   // Create Kafka configuration
   char hostname[128];
   char errstr[512];
+  std::string hostnameStr = "localhost";
 
   // create Kafka configuration object (global level configuration)
   rd_kafka_conf_t* conf = rd_kafka_conf_new();
 
   // Identifies machine hostname 
   if (gethostname(hostname, sizeof(hostname))) {
-    fprintf(stderr, "%% Failed to lookup hostname\n");
-    exit(1);
+    fprintf(stderr, "%% Failed to lookup hostname, defaulting to localhost\n");
+  } else {
+    hostnameStr = hostname;
   }
 
   // sets hostname retrieved above as client.id
-  if (rd_kafka_conf_set(conf, "client.id", hostname,
+  if (rd_kafka_conf_set(conf, "client.id", hostnameStr.c_str(),
                       errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) {
     fprintf(stderr, "%% %s\n", errstr);
     exit(1);
