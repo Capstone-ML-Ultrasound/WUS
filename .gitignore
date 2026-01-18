@@ -2,3 +2,4 @@
 build/
 kafka_data/
 *.exe
+data/

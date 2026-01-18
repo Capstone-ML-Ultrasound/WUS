@@ -1,7 +1,13 @@
 #include <cstdio>       // Required for fprintf, stderr
 #include <cstdlib>      // Required for exit
 #include <cstring>      // Required for string operations
-#include <unistd.h>     // Required for gethostname
+#ifdef _WIN32
+  #include <winsock2.h>
+  #pragma comment(lib, "ws2_32.lib")
+#else
+  #include <unistd.h>     // Required for gethostname
+#endif
+
 #include <vector>
 #include <librdkafka/rdkafka.h>
 #include "Utils.h"
@@ -16,6 +22,15 @@ int main() {
     int msg_count = 0; 
     Utils utils;
     std::vector<std::vector<unsigned char>> frameBuffer;
+
+    // Windows requires Winsock initialization for network functions
+    #ifdef _WIN32
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        fprintf(stderr, "%% Failed to initialize Winsock\n");
+        exit(1);
+    }
+    #endif
 
     // create configuration object
     rd_kafka_conf_t *conf = rd_kafka_conf_new();
@@ -84,8 +99,14 @@ int main() {
         rd_kafka_message_t *rkmessage = rd_kafka_consumer_poll(rk, 1000);
         
         // Timeout: no message
-        if (!rkmessage)
+        if (!rkmessage) {
+            static int timeout_print_count = 0;
+            if (++timeout_print_count % 5 == 0) { // Print every 5 timeouts (5 seconds)
+                 fprintf(stdout, "%% Waiting for messages... (ensure producer is running)\r");
+                 fflush(stdout);
+            }
             continue; 
+        }
 
         if (rkmessage->err) {
             fprintf(stderr, "%% Message error: %s\n", rd_kafka_message_errstr(rkmessage));
@@ -124,5 +145,9 @@ int main() {
     rd_kafka_consumer_close(rk);
     rd_kafka_destroy(rk);
     
+    #ifdef _WIN32
+    WSACleanup();
+    #endif
+
     return 0;
 }

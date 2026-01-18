@@ -21,7 +21,7 @@ void signalHandler(int signum) {
 
 std::string getDefaultPort() {
 #ifdef _WIN32
-  return "\\\\.\\COM3";
+  return "\\\\.\\COM4";
 #elif __APPLE__
   return "/dev/tty.usbmodem1101"; // (TO CHECK) ls /dev | grep tty.usb
 #else
