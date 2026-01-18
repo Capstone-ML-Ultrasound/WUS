@@ -1,5 +1,6 @@
 #include "USBuilder.h"
 #include "Utils.h"
+#include "USFrameProtocol.h"
 
 #include <chrono>
 #include <iostream>
@@ -108,8 +109,6 @@ void stream_continuous(USBuilder &dev, int numSamples) {
   samples.reserve(numSamples); // Pre-allocate to avoid reallocation
 
   while (running) {
-    auto frameStart = std::chrono::high_resolution_clock::now();
-
     // Acquire single frame
     if (!dev.requestAscan8bit(numSamples, samples)) {
       std::cerr << "Frame " << frameCount << " failed!" << std::endl;
@@ -156,6 +155,7 @@ void stream_continuous(USBuilder &dev, int numSamples) {
   std::cout << "========================================\n" << std::endl;
 }
 
+
 void stream_with_func4(USBuilder &dev, int numSamples, rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
   std::cout << "\n========================================" << std::endl;
   std::cout << "STREAMING MODE (Function 4 Auto-Sampling)" << std::endl;
@@ -177,6 +177,9 @@ void stream_with_func4(USBuilder &dev, int numSamples, rd_kafka_t *rk, rd_kafka_
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
   int frameCount = 0;
+  uint64_t sequence = 0; // Monotonic sequence counter
+  uint32_t deviceId = 1; // Assuming device 1 for now
+
   auto overallStart = std::chrono::high_resolution_clock::now();
 
   std::vector<unsigned char> samples(numSamples);
@@ -190,13 +193,16 @@ void stream_with_func4(USBuilder &dev, int numSamples, rd_kafka_t *rk, rd_kafka_
 
     frameCount++;
 
+    // Encode data with our binary envelope
+    std::vector<uint8_t> encodedMessage = USProtocol::encodeEnvelope(sequence++, deviceId, samples);
+
     // Send data to Kafka
     if (rd_kafka_produce(
             rkt,                          // topic handle
             RD_KAFKA_PARTITION_UA,        // choose partition (auto)
-            RD_KAFKA_MSG_F_COPY,          // librdkafka copies payload internally
-            (void*)samples.data(),        // pointer to your ultrasound frame
-            samples.size(),               // number of bytes in the frame
+            RD_KAFKA_MSG_F_COPY,          // copies payload (encodedMessage is local stack)
+            (void*)encodedMessage.data(), // pointer to our ENCODED envelope
+            encodedMessage.size(),        // total size (Header + Payload)
             nullptr,                      // optional key (we don't use)
             0,                            // key length
             nullptr) == -1)
@@ -205,7 +211,7 @@ void stream_with_func4(USBuilder &dev, int numSamples, rd_kafka_t *rk, rd_kafka_
                   << rd_kafka_err2str(rd_kafka_last_error())
                   << std::endl;
     }
-
+    
     // Poll to handle delivery reports
     rd_kafka_poll(rk, 0);
 

@@ -3,20 +3,32 @@
 #include <cstring>      // Required for string operations
 #ifdef _WIN32
   #include <winsock2.h>
-  #pragma comment(lib, "ws2_32.lib")
+  #include <winsock2.h>
 #else
   #include <unistd.h>     // Required for gethostname
 #endif
 
+#include <csignal>
 #include <vector>
 #include <librdkafka/rdkafka.h>
+#include <iostream>
 #include "Utils.h"
+#include "USFrameProtocol.h"
 
 // Configuration constants
 const int MIN_COMMIT_COUNT = 100;
 const int FLUSH_EVERY_FRAMES = 50; // write CSV every N frames
 
+volatile sig_atomic_t running = 1;
+
+void signalHandler(int signum) {
+    fprintf(stdout, "\n%% Shutdown signal received...\n");
+    running = 0;
+}
+
 int main() {
+    signal(SIGINT, signalHandler);
+
     char hostname[128];
     char errstr[512];
     int msg_count = 0; 
@@ -54,7 +66,19 @@ int main() {
         exit(1);
     }
 
-    if (rd_kafka_conf_set(conf, "bootstrap.servers", "localhost:9092",
+    const char* bootstrap_servers = std::getenv("BOOTSTRAP_SERVERS");
+    if (!bootstrap_servers) {
+        bootstrap_servers = "localhost:9092";
+    }
+
+    if (rd_kafka_conf_set(conf, "bootstrap.servers", bootstrap_servers,
+                          errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) {
+        fprintf(stderr, "%% %s\n", errstr);
+        exit(1);
+    }
+
+    // Set auto offset reset to latest (default) for real-time preference
+    if (rd_kafka_conf_set(conf, "auto.offset.reset", "latest",
                           errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) {
         fprintf(stderr, "%% %s\n", errstr);
         exit(1);
@@ -91,8 +115,6 @@ int main() {
     // destroy the list object now, the subscription is stored in 'rk'
     rd_kafka_topic_partition_list_destroy(subscription);
 
-    bool running = true;
-
     // poll Loop 
     while (running) {
         // Poll for messages (timeout 1000ms)
@@ -114,10 +136,30 @@ int main() {
             continue;
         }
 
-        // Capture payload into frame buffer
-        const unsigned char* payload = reinterpret_cast<const unsigned char*>(rkmessage->payload);
-        std::vector<unsigned char> frame(payload, payload + rkmessage->len);
-        frameBuffer.push_back(std::move(frame));
+
+
+        // Capture payload into frame buffer using new protocol
+        USProtocol::DecodedFrame decoded;
+        if (USProtocol::decodeEnvelope(rkmessage->payload, rkmessage->len, decoded)) {
+            // Valid Frame
+            std::vector<unsigned char> frame(decoded.payload, decoded.payload + decoded.payloadSize);
+            frameBuffer.push_back(std::move(frame));
+            
+            // Periodically log metadata
+            if (decoded.header->sequence_number % 100 == 0) {
+                 std::cout << "Received Frame #" << decoded.header->sequence_number 
+                           << " | Size: " << decoded.payloadSize 
+                           << " | TS: " << decoded.header->timestamp_ns << std::endl;
+            }
+
+        } else {
+            // Invalid frame (Legacy fallback or Corruption)
+            // For now, let's treat it as legacy raw data if it doesn't match magic
+            // OR log error and skip. Let's log error for safety.
+            fprintf(stderr, "%% Invalid frame format: magic mismatch or size error\n");
+            rd_kafka_message_destroy(rkmessage);
+            continue;
+        }
 
         // Periodically flush frames to CSV
         if (frameBuffer.size() >= FLUSH_EVERY_FRAMES) {
