@@ -9,23 +9,29 @@ UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
     # macOS (Homebrew)
     BOOST_ROOT = /opt/homebrew/opt/boost
+    RDKAFKA_ROOT = /opt/homebrew/opt/librdkafka
     PORT_EXAMPLE = /dev/tty.usbmodem31101
     PLATFORM = macOS
     INSTALL_CMD = brew install boost
+    RDKAFKA_INSTALL_CMD = brew install librdkafka
     LDFLAGS = -L$(BOOST_ROOT)/lib -pthread
 else ifeq ($(findstring MINGW,$(UNAME_S)),MINGW)
     # Windows (MinGW/MSYS2)
     BOOST_ROOT = /mingw64
+    RDKAFKA_ROOT = /mingw64
     PORT_EXAMPLE = COM3
     PLATFORM = Windows
     INSTALL_CMD = pacman -S mingw-w64-x86_64-boost
+    RDKAFKA_INSTALL_CMD = pacman -S mingw-w64-x86_64-librdkafka
     LDFLAGS = -L/mingw64/lib -lws2_32 -lwsock32 -pthread
 else
     # Fallback Windows (vcpkg)
     BOOST_ROOT = C:/vcpkg/installed/x64-windows
+    RDKAFKA_ROOT = C:/vcpkg/installed/x64-windows
     PORT_EXAMPLE = COM3
     PLATFORM = Windows
     INSTALL_CMD = vcpkg install boost-asio:x64-windows
+    RDKAFKA_INSTALL_CMD = vcpkg install librdkafka:x64-windows
     LDFLAGS = -LC:/vcpkg/installed/x64-windows/lib -lboost_system-mt -lws2_32 -lwsock32 -pthread
 endif
 
@@ -64,7 +70,7 @@ COMMON_OBJ = $(BUILDDIR)/Utils.o
 # Default target
 all: check-deps $(APPNAME) $(CONSUMER_APP)
 
-# Dependency check
+# Dependency check (auto-install if missing)
 .PHONY: check-deps
 check-deps:
 	@echo "=========================================="
@@ -72,14 +78,15 @@ check-deps:
 	@echo "=========================================="
 	@echo ""
 	@if [ ! -d "$(BOOST_ROOT)/include/boost" ]; then \
-		echo "❌ ERROR: Boost not found at $(BOOST_ROOT)"; \
-		echo ""; \
-		echo "📦 Installation instructions:"; \
-		echo "   $(INSTALL_CMD)"; \
-		echo ""; \
-		exit 1; \
+		echo "📦 Boost not found. Installing..."; \
+		$(INSTALL_CMD); \
 	fi
 	@echo "✅ Boost found at $(BOOST_ROOT)"
+	@if [ ! -f "$(RDKAFKA_ROOT)/include/librdkafka/rdkafka.h" ]; then \
+		echo "📦 librdkafka not found. Installing..."; \
+		$(RDKAFKA_INSTALL_CMD); \
+	fi
+	@echo "✅ librdkafka found at $(RDKAFKA_ROOT)"
 	@echo ""
 	@echo "📍 Example serial port for $(PLATFORM): $(PORT_EXAMPLE)"
 	@echo "   Update portName in main.cpp if needed"

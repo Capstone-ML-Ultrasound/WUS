@@ -33,8 +33,23 @@ You can run the entire backend (Kafka + Consumer) in Docker. This avoids install
 If you prefer to run everything locally without Docker:
 
 1.  **Prerequisites**:
-    *   `librdkafka` installed and linked.
-    *   `ws2_32` (Winsock) for Windows.
+    *   **librdkafka** (Kafka C library):
+        ```bash
+        # MSYS2/MinGW
+        pacman -S mingw-w64-x86_64-librdkafka
+        
+        # macOS (Homebrew)
+        brew install librdkafka
+        ```
+    *   **Boost** (for serial communication):
+        ```bash
+        # MSYS2/MinGW
+        pacman -S mingw-w64-x86_64-boost
+        
+        # macOS (Homebrew)
+        brew install boost
+        ```
+    *   `ws2_32` (Winsock) for Windows - included with MinGW.
 
 2.  **Start Background Services**:
     *   Ensure a Kafka broker is running on `localhost:9092`.
