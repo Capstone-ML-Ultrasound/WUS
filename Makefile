@@ -57,18 +57,18 @@ BUILDDIR = build
 
 # App names
 APPNAME = us_acq
-CONSUMER_APP = consumer
+PREPROCESS_APP = preprocess
 
 # Sources and objects
 SRC = $(wildcard $(SRCDIR)/*.cpp)
-APP_SRC = $(filter-out $(SRCDIR)/consumer.cpp, $(SRC))
+APP_SRC = $(filter-out $(SRCDIR)/preprocess.cpp, $(SRC))
 APP_OBJ = $(patsubst $(SRCDIR)/%.cpp, $(BUILDDIR)/%.o, $(APP_SRC))
-CONSUMER_SRC = $(SRCDIR)/consumer.cpp
-CONSUMER_OBJ = $(BUILDDIR)/consumer.o
+PREPROCESS_SRC = $(SRCDIR)/preprocess.cpp
+PREPROCESS_OBJ = $(BUILDDIR)/preprocess.o
 COMMON_OBJ = $(BUILDDIR)/Utils.o
 
 # Default target
-all: check-deps $(APPNAME) $(CONSUMER_APP)
+all: check-deps $(APPNAME) $(PREPROCESS_APP)
 
 # Dependency check (auto-install if missing)
 .PHONY: check-deps
@@ -102,12 +102,12 @@ $(APPNAME): $(APP_OBJ)
 	@echo "Run with: ./$(APPNAME)"
 	@echo ""
 
-$(CONSUMER_APP): $(CONSUMER_OBJ) $(COMMON_OBJ)
-	@echo "Linking $(CONSUMER_APP)..."
+$(PREPROCESS_APP): $(PREPROCESS_OBJ) $(COMMON_OBJ)
+	@echo "Linking $(PREPROCESS_APP)..."
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
-	@echo "✅ Consumer build successful!"
+	@echo "✅ Preprocess build successful!"
 	@echo ""
-	@echo "Run with: ./$(CONSUMER_APP)"
+	@echo "Run with: ./$(PREPROCESS_APP)"
 	@echo ""
 
 # Compile step (make sure build dir exists)
@@ -122,16 +122,16 @@ $(BUILDDIR):
 # Clean
 clean:
 	@echo "Cleaning build artifacts..."
-	rm -rf $(BUILDDIR) $(APPNAME) $(APPNAME).exe $(CONSUMER_APP) $(CONSUMER_APP).exe
+	rm -rf $(BUILDDIR) $(APPNAME) $(APPNAME).exe $(PREPROCESS_APP) $(PREPROCESS_APP).exe
 	@echo "✅ Clean complete"
 
 # Help
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  make               - Check dependencies and build producer+consumer"
+	@echo "  make               - Check dependencies and build producer+preprocess"
 	@echo "  make us_acq        - Build only the producer"
-	@echo "  make consumer      - Build only the consumer"
+	@echo "  make preprocess    - Build only the preprocess service"
 	@echo "  make clean         - Remove build artifacts"
 	@echo "  make help          - Show this help message"
 	@echo ""
