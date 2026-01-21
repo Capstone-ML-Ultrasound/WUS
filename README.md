@@ -1,25 +1,52 @@
 # Wireless Ultrasound System (WUS)
 
-This project streams ultrasound A-scan frames from a custom hardware device to Kafka, where a Consumer services reads and persists the data to CSV.
+This project implements a streaming data pipeline for ultrasound A-scan frames. It captures data from hardware, processes it in real-time (TGC, Envelope Detection, Log Compression, Gaussian Blur), and persists the results.
 
-## 🐳 Docker Quick Start (Recommended for Consumer)
-You can run the entire backend (Kafka + Consumer) in Docker. This avoids installing `librdkafka` and `Boost` manually.
+## � Architecture
 
-1.  **Start Kafka & Consumer**:
+The pipeline consists of four main components connected via **Apache Kafka**:
+
+1.  **Producer (`us_acq`)**:
+    *   Connects to the ultrasound hardware via USB/Serial.
+    *   Acquires raw A-scans via SPI Function 4 (Auto-sampling).
+    *   Encodes raw data with `USFrameProtocol` (V1).
+    *   Publishes to Kafka topic: `ultrasound_raw_data`.
+
+2.  **Preprocess Service (`preprocess`)**:
+    *   Consumes raw frames.
+    *   **Signal Processing**:
+        *   Time Gain Compensation (TGC).
+        *   DC Removal.
+        *   Envelope Detection (Hilbert Transform via Armadillo).
+        *   Log Compression.
+        *   **Separable Gaussian Blur**: Using a sliding window buffer (~30 frames) to apply smoothing in both Depth (1D) and Time (Weighted Average).
+    *   Publishes processed frames to Kafka topic: `ultrasound.clean`.
+    *   Uses `USProcessedFrameHeader` (V2 Extension) to track provenance.
+
+3.  **Output Service (`output`)**:
+    *   Consumes processed frames from `ultrasound.clean`.
+    *   Writes frames to CSV file (`ultrasound_output.csv`).
+
+4.  **Kafka**: Message broker handling the stream.
+
+---
+
+## 🐳 Docker Quick Start (Recommended)
+
+You can run the processing and output backend in Docker.
+
+1.  **Start Services**:
     ```bash
     docker-compose up --build
     ```
-    *   **Kafka** listens on `localhost:9092` (Host) and `kafka:29092` (Internal).
-    *   **Consumer** starts automatically inside Docker and waits for data.
+    *   Starts **Kafka**, **Preprocess**, and **Output** containers.
     *   **Data** is saved to the `./data` folder on your host machine.
 
 2.  **Run Producer (Host Machine)**:
     *   *Note: The producer must run on the host to access the USB hardware (COM port).*
     *   **Compile**:
         ```bash
-        make
-        # OR 
-        g++ src/main.cpp src/USBuilder.cpp src/Utils.cpp -o us_acq.exe -Iinclude -lrdkafka -lws2_32
+        make us_acq
         ```
     *   **Run**:
         ```bash
@@ -32,41 +59,55 @@ You can run the entire backend (Kafka + Consumer) in Docker. This avoids install
 
 If you prefer to run everything locally without Docker:
 
-1.  **Prerequisites**:
-    *   **librdkafka** (Kafka C library):
-        ```bash
-        # MSYS2/MinGW
-        pacman -S mingw-w64-x86_64-librdkafka
-        
-        # macOS (Homebrew)
-        brew install librdkafka
-        ```
-    *   **Boost** (for serial communication):
-        ```bash
-        # MSYS2/MinGW
-        pacman -S mingw-w64-x86_64-boost
-        
-        # macOS (Homebrew)
-        brew install boost
-        ```
-    *   `ws2_32` (Winsock) for Windows - included with MinGW.
-
-2.  **Start Background Services**:
-    *   Ensure a Kafka broker is running on `localhost:9092`.
-
-3.  **Compile & Run**:
+### 1. Prerequisites
+*   **librdkafka** (Kafka C library):
     ```bash
-    # Build
-    make
-    
-    # Run Consumer (Terminal 1)
-    ./consumer.exe
-    
-    # Run Producer (Terminal 2)
+    pacman -S mingw-w64-x86_64-librdkafka
+    ```
+*   **Armadillo** (Linear Algebra & Signal Processing):
+    ```bash
+    pacman -S mingw-w64-x86_64-armadillo
+    ```
+*   **Boost** (for serial communication):
+    ```bash
+    pacman -S mingw-w64-x86_64-boost
+    ```
+*   **Compiler**: GCC/G++ (MinGW64).
+
+### 2. Compile
+Use the provided `Makefile` (defaults to building all services):
+```bash
+# Build everything
+make
+
+# Build individual services
+make us_acq       # Producer
+make preprocess   # Signal Processing
+make output       # CSV Writer
+```
+
+### 3. Run
+Open separate terminals for each service:
+
+1.  **Kafka**: Ensure Kafka is running on `localhost:9092`.
+2.  **Preprocess**:
+    ```bash
+    ./preprocess.exe
+    ```
+3.  **Output**:
+    ```bash
+    ./output.exe
+    ```
+4.  **Producer**:
+    ```bash
     ./us_acq.exe
     ```
 
-## 📚 Architecture
-*   **Producer**: C++ app. connects to hardware via USB/Serial. Encodes frames with `USFrameProtocol` and pushes to Kafka (`ultrasound_raw_data`).
-*   **Kafka**: Message broker.
-*   **Consumer**: C++ app. Decodes frames, logs metadata, and batches data into CSV files in `data/`.
+---
+
+## � Protocol & Traceability
+The system maintains strict record identity:
+*   **Identity**: Generally, `Output Frame N` corresponds to `Input Frame N`. In the sliding window blur, `Output Frame N` is the smoothed version of `Input Frame N` (the center of the window).
+*   **Headers**: 
+    *   Input: `USFrameHeader` (Capture TS, Sequence ID).
+    *   Output: `USProcessedFrameHeader` (Inherits Capture TS/Seq, adds Processing TS, Window Size, Sigma parameters).

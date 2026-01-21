@@ -13,8 +13,8 @@ const uint8_t US_PROTOCOL_VERSION = 1;
 struct USFrameHeader {
     char magic[2];              // "US"
     uint8_t version;            // 1
-    uint8_t message_type;       // 1=A-Scan
-    int64_t timestamp_ns;       // Unix timestamp in nanoseconds
+    uint8_t message_type;       // 1=A-Scan, 2=Processed A-Scan
+    int64_t timestamp_ns;       // Unix timestamp in nanoseconds (Capture Time)
     uint64_t sequence_number;   // Monotonic counter
     uint32_t device_id;         // Identifier for the source device
     uint32_t num_samples;       // e.g. 512
@@ -22,10 +22,21 @@ struct USFrameHeader {
     uint8_t reserved[3];        // Padding for alignment
     uint32_t payload_length;    // Size of the following payload in bytes
 };
+
+struct USProcessedFrameHeader {
+    USFrameHeader base;         // Inherit base fields (Identity)
+    int64_t processing_ts_ns;   // When processing finished
+    uint16_t window_size;       // Temporal aperture size
+    float sigma_depth;          // Smoothing param 1
+    float sigma_time;           // Smoothing param 2
+    uint8_t reserved_proc[6];   // Padding to reach 24 bytes extension
+};
 #pragma pack(pop)
 
-// Ensure struct size is what we expect (36 bytes)
+// Ensure struct sizes
 static_assert(sizeof(USFrameHeader) == 36, "USFrameHeader size mismatch");
+static_assert(sizeof(USProcessedFrameHeader) == 60, "USProcessedFrameHeader size mismatch");
+
 
 namespace USProtocol {
 

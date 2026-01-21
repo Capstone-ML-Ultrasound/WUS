@@ -14,6 +14,7 @@ ifeq ($(UNAME_S),Darwin)
     PLATFORM = macOS
     INSTALL_CMD = brew install boost
     RDKAFKA_INSTALL_CMD = brew install librdkafka
+    ARMA_INSTALL_CMD = brew install armadillo
     LDFLAGS = -L$(BOOST_ROOT)/lib -pthread
 else ifeq ($(findstring MINGW,$(UNAME_S)),MINGW)
     # Windows (MinGW/MSYS2)
@@ -21,8 +22,9 @@ else ifeq ($(findstring MINGW,$(UNAME_S)),MINGW)
     RDKAFKA_ROOT = /mingw64
     PORT_EXAMPLE = COM3
     PLATFORM = Windows
-    INSTALL_CMD = pacman -S mingw-w64-x86_64-boost
-    RDKAFKA_INSTALL_CMD = pacman -S mingw-w64-x86_64-librdkafka
+    INSTALL_CMD = pacman -S --noconfirm mingw-w64-x86_64-boost
+    RDKAFKA_INSTALL_CMD = pacman -S --noconfirm mingw-w64-x86_64-librdkafka
+    ARMA_INSTALL_CMD = pacman -S --noconfirm mingw-w64-x86_64-armadillo
     LDFLAGS = -L/mingw64/lib -lws2_32 -lwsock32 -pthread
 else
     # Fallback Windows (vcpkg)
@@ -32,6 +34,7 @@ else
     PLATFORM = Windows
     INSTALL_CMD = vcpkg install boost-asio:x64-windows
     RDKAFKA_INSTALL_CMD = vcpkg install librdkafka:x64-windows
+    ARMA_INSTALL_CMD = echo "Please install armadillo manually via vcpkg"
     LDFLAGS = -LC:/vcpkg/installed/x64-windows/lib -lboost_system-mt -lws2_32 -lwsock32 -pthread
 endif
 
@@ -42,12 +45,19 @@ CXXFLAGS += -I$(BOOST_ROOT)/include
 KAFKA_CFLAGS := $(shell command -v pkg-config >/dev/null 2>&1 && pkg-config --cflags rdkafka)
 KAFKA_LDFLAGS := $(shell command -v pkg-config >/dev/null 2>&1 && pkg-config --libs rdkafka)
 
-CXXFLAGS += $(KAFKA_CFLAGS)
-LDFLAGS += $(KAFKA_LDFLAGS)
+# Armadillo (prefer pkg-config if available)
+ARMA_CFLAGS := $(shell command -v pkg-config >/dev/null 2>&1 && pkg-config --cflags armadillo)
+ARMA_LDFLAGS := $(shell command -v pkg-config >/dev/null 2>&1 && pkg-config --libs armadillo)
+
+CXXFLAGS += $(KAFKA_CFLAGS) $(ARMA_CFLAGS)
+LDFLAGS += $(KAFKA_LDFLAGS) $(ARMA_LDFLAGS)
 
 # Fallback when pkg-config is unavailable
 ifeq ($(strip $(KAFKA_LDFLAGS)),)
     LDFLAGS += -lrdkafka
+endif
+ifeq ($(strip $(ARMA_LDFLAGS)),)
+    LDFLAGS += -larmadillo
 endif
 
 # Directories
@@ -58,17 +68,24 @@ BUILDDIR = build
 # App names
 APPNAME = us_acq
 PREPROCESS_APP = preprocess
+OUTPUT_APP = output
 
 # Sources and objects
 SRC = $(wildcard $(SRCDIR)/*.cpp)
-APP_SRC = $(filter-out $(SRCDIR)/preprocess.cpp, $(SRC))
+# APP_SRC excludes service-specific files (preprocess, output)
+APP_SRC = $(filter-out $(SRCDIR)/preprocess.cpp $(SRCDIR)/output.cpp, $(SRC))
 APP_OBJ = $(patsubst $(SRCDIR)/%.cpp, $(BUILDDIR)/%.o, $(APP_SRC))
+
 PREPROCESS_SRC = $(SRCDIR)/preprocess.cpp
 PREPROCESS_OBJ = $(BUILDDIR)/preprocess.o
+
+OUTPUT_SRC = $(SRCDIR)/output.cpp
+OUTPUT_OBJ = $(BUILDDIR)/output.o
+
 COMMON_OBJ = $(BUILDDIR)/Utils.o
 
 # Default target
-all: check-deps $(APPNAME) $(PREPROCESS_APP)
+all: check-deps $(APPNAME) $(PREPROCESS_APP) $(OUTPUT_APP)
 
 # Dependency check (auto-install if missing)
 .PHONY: check-deps
@@ -87,6 +104,11 @@ check-deps:
 		$(RDKAFKA_INSTALL_CMD); \
 	fi
 	@echo "✅ librdkafka found at $(RDKAFKA_ROOT)"
+	@if [ ! -f "$(RDKAFKA_ROOT)/include/armadillo" ]; then \
+		echo "📦 Armadillo not found. Installing..."; \
+		$(ARMA_INSTALL_CMD); \
+	fi
+	@echo "✅ Armadillo found"
 	@echo ""
 	@echo "📍 Example serial port for $(PLATFORM): $(PORT_EXAMPLE)"
 	@echo "   Update portName in main.cpp if needed"
@@ -110,6 +132,14 @@ $(PREPROCESS_APP): $(PREPROCESS_OBJ) $(COMMON_OBJ)
 	@echo "Run with: ./$(PREPROCESS_APP)"
 	@echo ""
 
+$(OUTPUT_APP): $(OUTPUT_OBJ) $(COMMON_OBJ)
+	@echo "Linking $(OUTPUT_APP)..."
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+	@echo "✅ Output build successful!"
+	@echo ""
+	@echo "Run with: ./$(OUTPUT_APP)"
+	@echo ""
+
 # Compile step (make sure build dir exists)
 $(BUILDDIR)/%.o: $(SRCDIR)/%.cpp | $(BUILDDIR)
 	@echo "Compiling $<..."
@@ -122,16 +152,17 @@ $(BUILDDIR):
 # Clean
 clean:
 	@echo "Cleaning build artifacts..."
-	rm -rf $(BUILDDIR) $(APPNAME) $(APPNAME).exe $(PREPROCESS_APP) $(PREPROCESS_APP).exe
+	rm -rf $(BUILDDIR) $(APPNAME) $(APPNAME).exe $(PREPROCESS_APP) $(PREPROCESS_APP).exe $(OUTPUT_APP) $(OUTPUT_APP).exe
 	@echo "✅ Clean complete"
 
 # Help
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  make               - Check dependencies and build producer+preprocess"
+	@echo "  make               - Check dependencies and build producer+preprocess+output"
 	@echo "  make us_acq        - Build only the producer"
 	@echo "  make preprocess    - Build only the preprocess service"
+	@echo "  make output        - Build only the output service"
 	@echo "  make clean         - Remove build artifacts"
 	@echo "  make help          - Show this help message"
 	@echo ""
