@@ -72,8 +72,8 @@ OUTPUT_APP = output
 
 # Sources and objects
 SRC = $(wildcard $(SRCDIR)/*.cpp)
-# APP_SRC excludes service-specific files (preprocess, output)
-APP_SRC = $(filter-out $(SRCDIR)/preprocess.cpp $(SRCDIR)/output.cpp, $(SRC))
+# APP_SRC excludes service-specific files
+APP_SRC = $(filter-out $(SRCDIR)/preprocess.cpp $(SRCDIR)/output.cpp $(SRCDIR)/raw_sink.cpp, $(SRC))
 APP_OBJ = $(patsubst $(SRCDIR)/%.cpp, $(BUILDDIR)/%.o, $(APP_SRC))
 
 PREPROCESS_SRC = $(SRCDIR)/preprocess.cpp
@@ -82,10 +82,13 @@ PREPROCESS_OBJ = $(BUILDDIR)/preprocess.o
 OUTPUT_SRC = $(SRCDIR)/output.cpp
 OUTPUT_OBJ = $(BUILDDIR)/output.o
 
+RAW_SINK_SRC = $(SRCDIR)/raw_sink.cpp
+RAW_SINK_OBJ = $(BUILDDIR)/raw_sink.o
+
 COMMON_OBJ = $(BUILDDIR)/Utils.o
 
 # Default target
-all: check-deps $(APPNAME) $(PREPROCESS_APP) $(OUTPUT_APP)
+all: check-deps $(APPNAME) $(PREPROCESS_APP) $(OUTPUT_APP) raw_sink
 
 # Dependency check (auto-install if missing)
 .PHONY: check-deps
@@ -138,6 +141,14 @@ $(OUTPUT_APP): $(OUTPUT_OBJ) $(COMMON_OBJ)
 	@echo "✅ Output build successful!"
 	@echo ""
 	@echo "Run with: ./$(OUTPUT_APP)"
+	@echo ""
+
+raw_sink: $(RAW_SINK_OBJ) $(COMMON_OBJ)
+	@echo "Linking raw_sink..."
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+	@echo "✅ Raw sink build successful!"
+	@echo ""
+	@echo "Run with: ./raw_sink"
 	@echo ""
 
 # Compile step (make sure build dir exists)

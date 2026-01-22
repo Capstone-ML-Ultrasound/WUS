@@ -46,3 +46,16 @@ services:
     volumes:
       - ./data:/app/data
     restart: on-failure
+
+  raw_sink:
+    build: .
+    container_name: raw_sink
+    command: ./raw_sink
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+    volumes:
+      - ./data:/app/data
+    restart: on-failure

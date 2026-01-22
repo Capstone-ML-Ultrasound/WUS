@@ -25,7 +25,8 @@ COPY . .
 RUN mkdir -p build && \
     g++ -std=c++17 -Wall -Iinclude -o us_acq src/main.cpp src/USBuilder.cpp src/Utils.cpp -lrdkafka -lpthread && \
     g++ -std=c++17 -Wall -Iinclude -o preprocess src/preprocess.cpp src/Utils.cpp -lrdkafka -larmadillo -lpthread && \
-    g++ -std=c++17 -Wall -Iinclude -o output src/output.cpp src/Utils.cpp -lrdkafka -lpthread
+    g++ -std=c++17 -Wall -Iinclude -o output src/output.cpp src/Utils.cpp -lrdkafka -lpthread && \
+    g++ -std=c++17 -Wall -Iinclude -o raw_sink src/raw_sink.cpp -lrdkafka -lpthread
 
 # Runtime Stage
 FROM ubuntu:22.04
@@ -42,6 +43,7 @@ WORKDIR /app
 COPY --from=builder /app/us_acq .
 COPY --from=builder /app/preprocess .
 COPY --from=builder /app/output .
+COPY --from=builder /app/raw_sink .
 
 # Create data directory for CSV output
 RUN mkdir -p data

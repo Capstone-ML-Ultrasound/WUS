@@ -10,17 +10,19 @@
 
 #include "USFrameProtocol.h"
 
+#include <filesystem>
+
 // =================================================================================================
 // Configuration
 // =================================================================================================
 
-const char* TOPIC_IN = "ultrasound.clean";
+const char* TOPIC_IN = "ultrasound_raw_data";
 const int BURST_SIZE = 1000; // Frames per CSV file
 
 volatile sig_atomic_t running = 1;
 
 void signalHandler(int signum) {
-    std::cout << "\n[Output] Shutdown signal received..." << std::endl;
+    std::cout << "\n[RawSink] Shutdown signal received..." << std::endl;
     running = 0;
 }
 
@@ -59,11 +61,18 @@ rd_kafka_t* create_consumer(const std::string& brokers, const std::string& group
 // =================================================================================================
 
 void write_burst_csv(const std::vector<std::vector<uint8_t>>& buffer, int width, int height) {
+    // Output to data/verify (relative to WORKDIR /app)
+    std::string output_dir = "data/verify";
+
+    if (!std::filesystem::exists(output_dir)) {
+        std::filesystem::create_directory(output_dir);
+    }
+
     auto now = std::chrono::system_clock::now();
     auto in_time_t = std::chrono::system_clock::to_time_t(now);
     
     std::stringstream ss;
-    ss << "data/us_burst_" << std::put_time(std::localtime(&in_time_t), "%Y%m%d_%H%M%S") << ".csv";
+    ss << output_dir << "/us_raw_burst_" << std::put_time(std::localtime(&in_time_t), "%Y%m%d_%H%M%S") << ".csv";
     std::string filename = ss.str();
 
     std::ofstream csv_file(filename);
@@ -74,21 +83,18 @@ void write_burst_csv(const std::vector<std::vector<uint8_t>>& buffer, int width,
 
     // Transpose write: Rows = Depth (height), Cols = Time (width/buffer size)
     // buffer[frame_idx][depth_idx]
-    // We want to write:
-    // depth_0_frame_0, depth_0_frame_1, ...
-    // depth_1_frame_0, depth_1_frame_1, ...
     
     // Validate dimensions
     if (buffer.empty()) return;
     int frames = buffer.size();
     int samples = buffer[0].size(); 
 
-    std::cout << "[Output] Writing burst to " << filename << " (" << samples << "x" << frames << ")..." << std::endl;
+    std::cout << "[RawSink] Writing burst to " << filename << " (" << samples << "x" << frames << ")..." << std::endl;
 
     for (int d = 0; d < samples; ++d) {
         for (int f = 0; f < frames; ++f) {
-            // Safety check in case frames have different sizes (shouldn't happen with fixed protocol)
-            if (d < buffer[f].size()) {
+            // Safety check
+            if (d < static_cast<int>(buffer[f].size())) {
                 csv_file << static_cast<int>(buffer[f][d]);
             } else {
                 csv_file << "0";
@@ -99,7 +105,7 @@ void write_burst_csv(const std::vector<std::vector<uint8_t>>& buffer, int width,
     }
     
     csv_file.close();
-    std::cout << "[Output] Burst written." << std::endl;
+    std::cout << "[RawSink] Burst written." << std::endl;
 }
 
 // =================================================================================================
@@ -112,7 +118,7 @@ void consume_and_process(rd_kafka_t* consumer) {
     rd_kafka_subscribe(consumer, subscription);
     rd_kafka_topic_partition_list_destroy(subscription);
 
-    std::cout << "[Output] Subscribed to " << TOPIC_IN << ". Buffering " << BURST_SIZE << " frames per burst." << std::endl;
+    std::cout << "[RawSink] Subscribed to " << TOPIC_IN << ". Buffering " << BURST_SIZE << " frames per burst." << std::endl;
 
     std::vector<std::vector<uint8_t>> frame_buffer;
     frame_buffer.reserve(BURST_SIZE);
@@ -149,17 +155,12 @@ void consume_and_process(rd_kafka_t* consumer) {
         const uint8_t* payload_ptr = nullptr;
         size_t payload_size = 0;
 
-        if (base_h->message_type == 2) { // Processed
-            if (rkmessage->len < sizeof(USProcessedFrameHeader)) {
-                rd_kafka_message_destroy(rkmessage);
-                continue;
-            }
-            // const USProcessedFrameHeader* proc_h = reinterpret_cast<const USProcessedFrameHeader*>(rkmessage->payload);
-            payload_ptr = reinterpret_cast<const uint8_t*>(rkmessage->payload) + sizeof(USProcessedFrameHeader);
+        // Check for Raw A-Scan (Type 1)
+        if (base_h->message_type == 1) { 
+            payload_ptr = reinterpret_cast<const uint8_t*>(rkmessage->payload) + sizeof(USFrameHeader);
             payload_size = base_h->payload_length;
         } else {
-             // Fallback or ignore
-             // If receiving raw, we might want to handle it too, but for now skip
+             // Ignore other types
              rd_kafka_message_destroy(rkmessage);
              continue;
         }
@@ -176,7 +177,7 @@ void consume_and_process(rd_kafka_t* consumer) {
         }
 
         if (++total_frames % 100 == 0) {
-            std::cout << "[Output] Buffered " << frame_buffer.size() << "/" << BURST_SIZE << " frames (Total: " << total_frames << ")" << std::endl;
+            std::cout << "[RawSink] Buffered " << frame_buffer.size() << "/" << BURST_SIZE << " frames (Total: " << total_frames << ")" << std::endl;
         }
 
         rd_kafka_message_destroy(rkmessage);
@@ -189,7 +190,7 @@ int main() {
     std::string brokers = "localhost:9092";
     if (const char* env = std::getenv("BOOTSTRAP_SERVERS")) brokers = env;
 
-    rd_kafka_t* consumer = create_consumer(brokers, "output_csv_group");
+    rd_kafka_t* consumer = create_consumer(brokers, "raw_sink_group");
     if (!consumer) return 1;
 
     consume_and_process(consumer);
@@ -197,6 +198,6 @@ int main() {
     rd_kafka_consumer_close(consumer);
     rd_kafka_destroy(consumer);
 
-    std::cout << "\n[Output] Done." << std::endl;
+    std::cout << "\n[RawSink] Done." << std::endl;
     return 0;
 }
