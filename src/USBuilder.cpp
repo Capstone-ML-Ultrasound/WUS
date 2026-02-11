@@ -76,7 +76,7 @@ bool USBuilder::writeAll(const unsigned char* buf, size_t len) {
  * Read exactly 'len' bytes from the device.
  * Loops until all data arrives or timeout hits.
  */
-bool USBuilder::readExact(unsigned char* buf, size_t len, int timeoutMs) {
+bool USBuilder::readExact(unsigned char* buf, size_t len) {
     try {
         boost::system::error_code ec;
         size_t bytesRead = boost::asio::read(*m_port, buffer(buf, len), ec);
@@ -115,7 +115,7 @@ bool USBuilder::requestFirmware(std::string& versionOut) {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     unsigned char buf[1];
-    if (!readExact(buf, 1, 1000)) {
+    if (!readExact(buf, 1)) {
         std::cerr << "Failed in reading from buffer" << std::endl;
         return false;
     }
@@ -132,8 +132,8 @@ bool USBuilder::requestFirmware(std::string& versionOut) {
  * Note -- if the request is bad -- it will give all 50's back to you (dummy data)
  */
 bool USBuilder::requestAscan8bit(int numPoints, std::vector<unsigned char>& outData) {
-    if (numPoints <= 0 || numPoints > 4000) {
-        std::cerr << "Invalid numPoints: " << numPoints << " (must be 1-4000)" << std::endl;
+    if (numPoints <= 0 || numPoints > 4096) {
+        std::cerr << "Invalid numPoints: " << numPoints << " (must be 1-4096)" << std::endl;
         return false;
     }
 
@@ -154,12 +154,9 @@ bool USBuilder::requestAscan8bit(int numPoints, std::vector<unsigned char>& outD
         return false;
     }
 
-    // Wait briefly for acquisition
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
     // Read samples back
     outData.resize(numPoints);
-    return readExact(outData.data(), numPoints, 5000); // .data() returns ptr to underlying vector
+    return readExact(outData.data(), numPoints); // .data() returns ptr to underlying vector
 }
 
 /**
@@ -173,14 +170,14 @@ bool USBuilder::requestAscan8bit(int numPoints, std::vector<unsigned char>& outD
 bool USBuilder::requestAscan8bitBurst(int numPoints, int numFrames,
                                       std::vector<std::vector<unsigned char>>& outBurstData) {
 
-    if (numPoints <= 0 || numPoints > 4000) {
-        std::cerr << "Invalid numPoints: " << numPoints << " (must be 1-4000)" << std::endl;
+    if (numPoints <= 0 || numPoints > 4096) {
+        std::cerr << "Invalid numPoints: " << numPoints << " (must be 1-4096)" << std::endl;
         return false;
     }
 
     unsigned char cmd[12] = {140, 140, 140, 140, 140, 0, 0, 0, 0, 0, 0, 0};
 
-    // Num points max== 4000 (bitwise ~12bits, needs to set the correct bits)
+    // Num points max== 4096 (bitwise ~12bits, needs to set the correct bits)
     cmd[6] = (numPoints >> 8) & 0xFF;
     cmd[7] = numPoints & 0xFF;
 
@@ -194,7 +191,7 @@ bool USBuilder::requestAscan8bitBurst(int numPoints, int numFrames,
             return false;
         }
 
-        if (!readExact(outBurstData[i].data(), numPoints, 5000)) {
+        if (!readExact(outBurstData[i].data(), numPoints)) {
             std::cerr << "Failed to read frame " << i << std::endl;
             return false;
         }
@@ -246,4 +243,103 @@ bool USBuilder::programSPIFunc4(int numpoints){
 
     return true;
 
+}
+
+
+
+bool USBuilder::func4_setAutoSample(int numpoints) {
+
+    unsigned char cmd[12] = {140, 140, 140, 140, 140, 0, 0, 0, 0, 0, 0, 0};
+    cmd[5] = 1;                                                     // Write mode
+    cmd[6] = 3;                                                     // 3 parameters (func, lsb, msb)
+    cmd[7] = static_cast<unsigned char>((numpoints >> 8) & 0xFF);   // MSB
+    cmd[8] = static_cast<unsigned char>(numpoints & 0xFF);          // LSB
+    cmd[9] = 4;                                                     // Function 4 (Auto Sampling Request)
+
+    if (!writeAll(cmd, sizeof(cmd))) {
+        std::cerr << "Failed to send Function 4 auto-sampling command" << std::endl;
+        return false;
+    }
+
+    std::cout << "Auto-sampling enabled: will trigger after "
+              << numpoints << " samples read (Function 4)" << std::endl;
+
+    return true;
+}
+
+bool USBuilder::func24_setSamplingFreq(int freq) {
+    int f;
+    if (freq == 160) {
+        f = 0;
+    } else if (freq == 80) {
+        f = 1;
+    } else if (freq == 40) {
+        f = 2;
+    } else if (freq == 20) {
+        f = 3;
+    } else {
+        std::cerr << "NOT VALID FREQ" << std::endl;
+        return false;
+    }
+
+    unsigned char cmd[12] = {140, 140, 140, 140, 140, 0, 0, 0, 0, 0, 0, 0};
+
+    cmd[5] = 1;          // Write mode
+    cmd[6] = 2;          // 3 parameters (func, lsb, msb)
+    cmd[7] = f;          // LSB
+    cmd[8] = 24;         // func 24
+
+    if (!writeAll(cmd, sizeof(cmd))) {
+        std::cerr << "Failed to send Function 24 (SamplingFreq) command" << std::endl;
+        return false;
+    }
+    return true;
+}
+
+bool USBuilder::func14_setFilter(double mhz) {
+    int filter;
+
+    if (mhz == 1.25) {
+        filter = 0;
+    } else if (mhz == 2.5) {
+        filter = 1;
+    } else if (mhz == 5) {
+        filter = 2;
+    } else if (mhz == 10) {
+        filter = 3;
+    } else if (mhz == -1){
+        filter = 4;
+    }else{
+        std::cerr << "NOT VALID Filter" << std::endl;
+        return false;
+    }
+
+    unsigned char cmd[12] = {140, 140, 140, 140, 140, 0, 0, 0, 0, 0, 0, 0};
+
+    cmd[5] = 1;          // Write mode
+    cmd[6] = 2;          // # params
+    cmd[7] = filter;
+    cmd[8] = 14;        // Func 14
+
+    if (!writeAll(cmd, sizeof(cmd))) {
+        std::cerr << "Failed to send Function 14 (Filter) command" << std::endl;
+        return false;
+    }
+    return true;
+}
+
+bool USBuilder::func3_setCompression(int factor) {
+
+    unsigned char cmd[12] = {140, 140, 140, 140, 140, 0, 0, 0, 0, 0, 0, 0};
+
+    cmd[5] = 1;          // Write mode
+    cmd[6] = 2;          // # params
+    cmd[7] = factor;
+    cmd[8] = 3;          // Func 3
+
+    if (!writeAll(cmd, sizeof(cmd))) {
+        std::cerr << "Failed to send Function 3 (Compression) command" << std::endl;
+        return false;
+    }
+    return true;
 }
