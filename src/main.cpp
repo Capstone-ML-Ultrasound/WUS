@@ -95,15 +95,22 @@ void func4_set_burst(USBuilder &dev, Utils &utils) {
 void stream_continuous(USBuilder &dev, int depth, int freq, double filter_mhz, int compression, rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
 
   // 1. Setup Hardware
+
+  // ************
+  int expectedBytes = depth / (compression + 1); //for the compression thing
+
   // ONLY Can change filter IFF freq=80
   if (freq == 80) {
       if (!dev.func14_setFilter(filter_mhz)){return;}
   }
+
   if (!dev.func24_setSamplingFreq(freq)){return;}
+
   if (freq==80 && filter_mhz == -1) {
       if (!dev.func3_setCompression(compression)){return;}
   }
-  if (!dev.func4_setAutoSample(depth)) {return;}
+
+  if (!dev.func4_setAutoSample(expectedBytes)) {return;}    ///****************** dpeth
 
 
   // 2. Setup for streaming
@@ -114,7 +121,7 @@ void stream_continuous(USBuilder &dev, int depth, int freq, double filter_mhz, i
   std::vector<unsigned char> samples(depth);
   // std::vector<unsigned char> samples;
   // samples.reserve(depth);
-  int expectedBytes = depth / (compression + 1); //for the compression thing
+  //int expectedBytes = depth / (compression + 1); //for the compression thing
 
   // 3. Stream
   while (running) {
@@ -166,6 +173,51 @@ void stream_continuous(USBuilder &dev, int depth, int freq, double filter_mhz, i
   // 6. Flush pending Kafka messages
   rd_kafka_flush(rk, 10 * 1000);
 
+}
+
+
+void burst(USBuilder &dev, int depth, int freq, double filter_mhz, int compression, int numFrames, rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
+
+  std::cout << "\n--- Acquiring burst data ---" << std::endl;
+  std::vector<std::vector<unsigned char>> burstData;
+
+  // 1. Setup Hardware
+  // ************
+  int expectedBytes = depth / (compression + 1); //for the compression thing
+
+  // ONLY Can change filter IFF freq=80
+  if (freq == 80) {
+    if (!dev.func14_setFilter(filter_mhz)){return;}
+  }
+  if (!dev.func24_setSamplingFreq(freq)){return;}
+  if (freq==80 && filter_mhz == -1) {
+    if (!dev.func3_setCompression(compression)){return;}
+  }
+  if (!dev.func4_setAutoSample(expectedBytes)) {return;}    ///****************** dpeth
+
+
+  auto start = std::chrono::high_resolution_clock::now();
+  std::cout << "\n--- Acquiring burst "<< numFrames << " Samples ---" << std::endl;
+
+
+  if (dev.requestAscan8bitBurst(4000, 1000, burstData)) {
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::milli> duration_ms = end - start;
+
+    std::cout << "Burst acquisition complete" << std::endl;
+    std::cout << "   Frames: " << burstData.size() << std::endl;
+    std::cout << "   Samples per frame: " << burstData[0].size() << std::endl;
+    std::cout << "   Duration: " << duration_ms.count() << " ms" << std::endl;
+    std::cout << "   Frame rate: "
+              << (burstData.size() * 1000.0 / duration_ms.count()) << " fps"
+              << std::endl;
+
+    // TODO -- PASS TO KAFKA AND SAVE
+
+  } else {
+    std::cerr << "Burst acquisition failed" << std::endl;
+    dev.disconnect();
+  }
 }
 
 int main(int argc, char* argv[]) {
