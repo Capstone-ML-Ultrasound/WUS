@@ -7,10 +7,9 @@
 #include <unistd.h>
 #include <signal.h> // For Ctrl+C handling
 #include <vector>
-#include <thread>
+#include <getopt.h> // Added for argument parsing
 
 #include <librdkafka/rdkafka.h>
-
 
 // Global flag for clean shutdown
 volatile sig_atomic_t running = 1;
@@ -24,7 +23,7 @@ std::string getDefaultPort() {
 #ifdef _WIN32
   return "\\\\.\\COM4";
 #elif __APPLE__
-  return "/dev/tty.usbmodem1101"; // (TO CHECK) ls /dev | grep tty.usb
+  return "/dev/tty.usbmodem11101"; // (TO CHECK) ls /dev | grep tty.usb
 #else
   return "/dev/ttyUSB0";
 #endif
@@ -51,14 +50,7 @@ std::vector<unsigned char> acquire_single_Ascan(USBuilder &dev) {
   return samples;
 }
 
-/**
- *  IDK WHY THIS IS THE SAME
- *
- *  - this is what is expected (set func4 -> manuual trigger -> read)
- *  - but this gives the same FPS as, where we jsut send a read command?????
- *
- *  is by default Func4 active? does it work?
- */
+
 void func4_set_burst(USBuilder &dev, Utils &utils) {
 
   std::cout << "\n--- Acquiring burst data ---" << std::endl;
@@ -100,103 +92,50 @@ void func4_set_burst(USBuilder &dev, Utils &utils) {
   }
 }
 
-void stream_continuous(USBuilder &dev, int numSamples) {
+void stream_continuous(USBuilder &dev, int depth, int freq, double filter_mhz, int compression, rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
 
-  int frameCount = 0;
-  auto overallStart = std::chrono::high_resolution_clock::now();
+  // 1. Setup Hardware
 
-  std::vector<unsigned char> samples;
-  samples.reserve(numSamples); // Pre-allocate to avoid reallocation
+  // ************
+  int expectedBytes = depth / (compression + 1); //for the compression thing
 
-  while (running) {
-    // Acquire single frame
-    if (!dev.requestAscan8bit(numSamples, samples)) {
-      std::cerr << "Frame " << frameCount << " failed!" << std::endl;
-      continue; // Try again instead of exiting
-    }
-
-    frameCount++;
-
-    // Display statistics every 10 frames
-    if (frameCount % 10 == 0) {
-      auto now = std::chrono::high_resolution_clock::now();
-      std::chrono::duration<double> elapsed = now - overallStart;
-      double fps = frameCount / elapsed.count();
-
-      // Calculate some basic stats from the frame
-      unsigned char minVal = 255, maxVal = 0;
-      long sum = 0;
-      for (unsigned char val : samples) {
-        sum += val;
-        if (val < minVal)
-          minVal = val;
-        if (val > maxVal)
-          maxVal = val;
-      }
-      double avgVal = sum / (double)samples.size();
-
-      std::cout << "Frame " << frameCount << " | FPS: " << std::fixed << fps
-                << " | Min: " << (int)minVal << " | Max: " << (int)maxVal
-                << " | Avg: " << std::fixed << avgVal
-                << " | First sample: " << (int)samples[0] << std::endl;
-    }
+  // ONLY Can change filter IFF freq=80
+  if (freq == 80) {
+      if (!dev.func14_setFilter(filter_mhz)){return;}
   }
 
-  auto overallEnd = std::chrono::high_resolution_clock::now();
-  std::chrono::duration<double> totalTime = overallEnd - overallStart;
+  if (!dev.func24_setSamplingFreq(freq)){return;}
 
-  std::cout << "\n========================================" << std::endl;
-  std::cout << "STREAMING STOPPED" << std::endl;
-  std::cout << "Total frames: " << frameCount << std::endl;
-  std::cout << "Total time: " << std::fixed << totalTime.count() << " seconds"
-            << std::endl;
-  std::cout << "Average FPS: " << std::fixed << (frameCount / totalTime.count())
-            << std::endl;
-  std::cout << "========================================\n" << std::endl;
-}
-
-
-void stream_with_func4(USBuilder &dev, int numSamples, rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
-  std::cout << "\n========================================" << std::endl;
-  std::cout << "STREAMING MODE (Function 4 Auto-Sampling)" << std::endl;
-  std::cout << "Press Ctrl+C to stop" << std::endl;
-  std::cout << "========================================\n" << std::endl;
-
-  // Enable auto-sampling
-  if (!dev.programSPIFunc4(numSamples)) {
-    std::cerr << "Failed to enable auto-sampling" << std::endl;
-    return;
+  if (freq==80 && filter_mhz == -1) {
+      if (!dev.func3_setCompression(compression)){return;}
   }
-  std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-  // Trigger first acquisition
-  if (!dev.programSPIFunc2()) {
-    std::cerr << "Failed to trigger first acquisition" << std::endl;
-    return;
-  }
-  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  if (!dev.func4_setAutoSample(expectedBytes)) {return;}    ///****************** dpeth
 
+
+  // 2. Setup for streaming
   int frameCount = 0;
   uint64_t sequence = 0; // Monotonic sequence counter
   uint32_t deviceId = 1; // Assuming device 1 for now
-
   auto overallStart = std::chrono::high_resolution_clock::now();
+  std::vector<unsigned char> samples(depth);
+  // std::vector<unsigned char> samples;
+  // samples.reserve(depth);
+  //int expectedBytes = depth / (compression + 1); //for the compression thing
 
-  std::vector<unsigned char> samples(numSamples);
-
+  // 3. Stream
   while (running) {
-    // Just read - hardware auto-triggers!
-    if (!dev.requestAscan8bit(numSamples, samples)) {
-      std::cerr << "Frame " << frameCount << " failed!" << std::endl;
-      continue;
+    // Acquire data from hardware
+    if (!dev.requestAscan8bit(expectedBytes, samples)) {
+        std::cerr << "Frame " << frameCount << " failed!" << std::endl;
+        continue;
     }
-
     frameCount++;
 
     // Encode data with our binary envelope
     std::vector<uint8_t> encodedMessage = USProtocol::encodeEnvelope(sequence++, deviceId, samples);
 
-    // Send data to Kafka
+    // Send to Kafka
     if (rd_kafka_produce(
             rkt,                          // topic handle
             RD_KAFKA_PARTITION_UA,        // choose partition (auto)
@@ -207,52 +146,138 @@ void stream_with_func4(USBuilder &dev, int numSamples, rd_kafka_t *rk, rd_kafka_
             0,                            // key length
             nullptr) == -1)
     {
-        std::cerr << "Kafka produce failed: "
-                  << rd_kafka_err2str(rd_kafka_last_error())
-                  << std::endl;
+      std::cerr << "Kafka produce failed: "
+                << rd_kafka_err2str(rd_kafka_last_error())
+                << std::endl;
     }
-    
+
     // Poll to handle delivery reports
     rd_kafka_poll(rk, 0);
 
+    // 4. Calculate and display FPS
     if (frameCount % 10 == 0) {
-      auto now = std::chrono::high_resolution_clock::now();
-      std::chrono::duration<double> elapsed = now - overallStart;
-      double fps = frameCount / elapsed.count();
-
-      unsigned char maxVal = 0;
-      for (unsigned char val : samples) {
-        if (val > maxVal)
-          maxVal = val;
-      }
-
-      std::cout << "Frame " << frameCount << " | FPS: " << std::fixed << fps
-                << " | Peak: " << (int)maxVal << std::endl;
+        auto now = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> elapsed = now - overallStart;
+        double fps = frameCount / elapsed.count();
+        std::cout << "Frame " << frameCount << " | FPS: " << std::fixed << fps << std::endl;
     }
   }
 
+  // 5. Streaming stats
   auto overallEnd = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double> totalTime = overallEnd - overallStart;
 
   std::cout << "\nTotal frames: " << frameCount << std::endl;
   std::cout << "Average FPS: " << (frameCount / totalTime.count()) << std::endl;
-  
-  // Flush pending Kafka messages
+
+  // 6. Flush pending Kafka messages
   rd_kafka_flush(rk, 10 * 1000);
 
 }
 
-int main() {
-  std::cout << "========================================" << std::endl;
-  std::cout << "US-Builder Data Acquisition" << std::endl;
-  std::cout << "========================================\n" << std::endl;
+
+void burst(USBuilder &dev, int depth, int freq, double filter_mhz, int compression, int numFrames, rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
+
+  std::cout << "\n--- Acquiring burst data ---" << std::endl;
+  std::vector<std::vector<unsigned char>> burstData;
+
+  // 1. Setup Hardware
+  // ************
+  int expectedBytes = depth / (compression + 1); //for the compression thing
+
+  // ONLY Can change filter IFF freq=80
+  if (freq == 80) {
+    if (!dev.func14_setFilter(filter_mhz)){return;}
+  }
+  if (!dev.func24_setSamplingFreq(freq)){return;}
+  if (freq==80 && filter_mhz == -1) {
+    if (!dev.func3_setCompression(compression)){return;}
+  }
+  if (!dev.func4_setAutoSample(expectedBytes)) {return;}    ///****************** dpeth
+
+
+  auto start = std::chrono::high_resolution_clock::now();
+  std::cout << "\n--- Acquiring burst "<< numFrames << " Samples ---" << std::endl;
+
+
+  if (dev.requestAscan8bitBurst(4000, 1000, burstData)) {
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::milli> duration_ms = end - start;
+
+    std::cout << "Burst acquisition complete" << std::endl;
+    std::cout << "   Frames: " << burstData.size() << std::endl;
+    std::cout << "   Samples per frame: " << burstData[0].size() << std::endl;
+    std::cout << "   Duration: " << duration_ms.count() << " ms" << std::endl;
+    std::cout << "   Frame rate: "
+              << (burstData.size() * 1000.0 / duration_ms.count()) << " fps"
+              << std::endl;
+
+    // TODO -- PASS TO KAFKA AND SAVE
+
+  } else {
+    std::cerr << "Burst acquisition failed" << std::endl;
+    dev.disconnect();
+  }
+}
+
+int main(int argc, char* argv[]) {
+  std::cout << "US-Builder Data Acquisition (Kafka Streamer)" << std::endl;
+
+  // 1. Default Values
+  int depth = 4090;
+  int freq = 80;
+  double filter_mhz = -1;  // no filter
+  int compression = 1;    // no compression
+
+  // 2. Parse Command Line Arguments
+  static struct option long_options[] = {
+      {"depth", required_argument, 0, 'd'},
+      {"freq",  required_argument, 0, 'f'},
+      {"help",  no_argument, 0, 'h'},
+      {"filter", required_argument, 0, 'm'},
+      {"compression", required_argument, 0, 'c'},
+      {0, 0, 0, 0}
+  };
+
+  int opt;
+  int option_index = 0;
+  while ((opt = getopt_long(argc, argv, "d:f:m:c:h", long_options, &option_index)) != -1) {
+      switch (opt) {
+          case 'd':
+              depth = std::stoi(optarg);
+              break;
+          case 'f':
+              freq = std::stoi(optarg);
+              break;
+          case 'm':
+              filter_mhz = std::stod(optarg); // using stod for doubles (e.g. 1.25)
+              break;
+          case 'c':
+              compression = std::stoi(optarg);
+              break;
+          case 'h':
+              std::cout << "Usage: " << argv[0] << " [--depth <n>] [--freq <n>]\n"
+                        << "  --depth, -d        Number of samples to capture (max 4090)\n"
+                        << "  --freq,  -f        Sampling frequency in MHz (160, 80, 40, 20)\n"
+                        << "  --filter, -m       Filter (1.25, 2.5, 5, 10, -1)\n"
+                        << "  --compression, -c  Compression factor (0, 1, 2, 3)\n"
+                        << "  --help,  -h        Display this help message" << std::endl;
+              return 0;
+          default:
+              return 1;
+      }
+  }
 
   // Set up Ctrl+C handler
   signal(SIGINT, signalHandler);
 
   // Platform-specific port selection
   std::string portName = getDefaultPort();
-  std::cout << "Using port: " << portName << "\n" << std::endl;
+  std::cout << "Using port: " << portName << std::endl;
+  std::cout << "Configuration: Depth=" << depth
+            << ", Freq=" << freq
+            << ", Filter=" << filter_mhz
+            << ", Comp=" << compression << "\n" << std::endl;
 
   // Instantiations
   USBuilder dev(portName);
@@ -272,7 +297,7 @@ int main() {
   // create Kafka configuration object (global level configuration)
   rd_kafka_conf_t* conf = rd_kafka_conf_new();
 
-  // Identifies machine hostname 
+  // Identifies machine hostname
   if (gethostname(hostname, sizeof(hostname))) {
     fprintf(stderr, "%% Failed to lookup hostname, defaulting to localhost\n");
   } else {
@@ -303,7 +328,7 @@ int main() {
     exit(1);
   }
 
-  // Create Kafka producer handle 
+  // Create Kafka producer handle
   rd_kafka_t *rk;
   if (!(rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf,
                           errstr, sizeof(errstr)))) {
@@ -311,7 +336,7 @@ int main() {
     exit(1);
   }
 
-  // create topic handle 
+  // create topic handle
   const char* topic_name = "ultrasound_raw_data";
   rd_kafka_topic_t *rkt = rd_kafka_topic_new(rk, topic_name, topic_conf);
   if (!rkt) {
@@ -319,9 +344,8 @@ int main() {
             rd_kafka_err2str(rd_kafka_last_error()));
     exit(1);
   }
-  
-  // stream_continuous(dev, 512);
-  stream_with_func4(dev, 512, rk, rkt);
+
+  stream_continuous(dev, depth, freq, filter_mhz, compression, rk, rkt);
 
   // Disconnect before exiting
   dev.disconnect();

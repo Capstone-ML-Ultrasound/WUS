@@ -22,14 +22,18 @@ public:
     bool programSPIFunc2();
     bool programSPIFunc4(int numPoints);
 
-    
+    bool func4_setAutoSample(int numpoints);
+    bool func24_setSamplingFreq(int freq);
+    bool func14_setFilter(double mhz);
+    bool func3_setCompression(int factor);
+
 private:
     std::string m_portName;
     std::unique_ptr<boost::asio::io_context> m_io;
     std::unique_ptr<boost::asio::serial_port> m_port;
 
     bool writeAll(const unsigned char* buf, size_t len);
-    bool readExact(unsigned char* buf, size_t len, int timeoutMs = 2000);
+    bool readExact(unsigned char* buf, size_t len);
 };
 
 #endif
