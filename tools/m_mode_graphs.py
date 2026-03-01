@@ -2,6 +2,7 @@ import argparse
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 
 # Parse arguments
 parser = argparse.ArgumentParser(description='Visualize M-Mode Data')
@@ -20,7 +21,15 @@ plt.title("M-Mode Visualization (Check for Stripes)")
 plt.xlabel("Time (Frames)")
 plt.ylabel("Depth (Samples)")
 plt.colorbar(label="Log Signal Strength")
-plt.show()
+
+# Construct the new filename
+base_path, _ = os.path.splitext(args.filepath)
+output_filepath = f"{base_path}_graph.png"
+
+# Save the graph and close the plot
+plt.savefig(output_filepath, bbox_inches='tight')
+plt.close()
+print(f"Graph successfully saved to: {output_filepath}\n")
 
 # 3. Math Check: Signal vs Noise
 mean_val = np.mean(data)
