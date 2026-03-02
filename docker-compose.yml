@@ -56,6 +56,13 @@ services:
         condition: service_healthy
     environment:
       BOOTSTRAP_SERVERS: kafka:29092
+      RAW_GCS_BUCKET: raw-capstone-bucket
+      RAW_GCS_PREFIX: ${RAW_GCS_PREFIX:-ultrasound/raw}
+      RAW_GCS_KEEP_LOCAL: ${RAW_GCS_KEEP_LOCAL:-false}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
     volumes:
       - ./data:/app/data
+      - ./secrets:/app/secrets:ro
+      - ${APPDATA}/gcloud:/root/.config/gcloud:ro
     restart: on-failure

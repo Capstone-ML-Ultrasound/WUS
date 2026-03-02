@@ -27,7 +27,12 @@ The pipeline consists of four main components connected via **Apache Kafka**:
     *   Consumes processed frames from `ultrasound.clean`.
     *   Writes frames to CSV file (`ultrasound_output.csv`).
 
-4.  **Kafka**: Message broker handling the stream.
+4.  **Raw Sink (`raw_sink`)**:
+    *   Consumes immutable raw frames from `ultrasound_raw_data`.
+    *   Writes burst CSV files and uploads them to Google Cloud Storage for replayability.
+    *   Optional local retention controlled by `RAW_GCS_KEEP_LOCAL`.
+
+5.  **Kafka**: Message broker handling the stream.
 
 ---
 
@@ -39,10 +44,23 @@ You can run the processing and output backend in Docker.
     ```bash
     docker-compose up --build
     ```
-    *   Starts **Kafka**, **Preprocess**, and **Output** containers.
+    *   Starts **Kafka**, **Preprocess**, **Output**, and **RawSink** containers.
     *   **Data** is saved to the `./data` folder on your host machine.
 
-2.  **Run Producer (Host Machine)**:
+2.  **Enable object-store archive for raw replay (Google Cloud Storage)**:
+    Set these environment variables before `docker-compose up`:
+    ```bash
+    export RAW_GCS_BUCKET=my-ultrasound-raw-archive
+    export RAW_GCS_PREFIX=ultrasound/raw
+    export RAW_GCS_KEEP_LOCAL=false
+    export GCP_PROJECT_ID=my-gcp-project
+
+    # Path inside the container (mounted from ./secrets by docker-compose)
+    export GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/gcp-sa.json
+    ```
+    If `RAW_GCS_BUCKET` is empty, `raw_sink` keeps writing local CSV only.
+
+3.  **Run Producer (Host Machine)**:
     *   *Note: The producer must run on the host to access the USB hardware (COM port).*
     *   **Compile**:
         ```bash

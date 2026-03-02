@@ -6,6 +6,8 @@
 #include <chrono>
 #include <iomanip>
 #include <sstream>
+#include <algorithm>
+#include <cctype>
 #include <librdkafka/rdkafka.h>
 
 #include "USFrameProtocol.h"
@@ -24,6 +26,45 @@ volatile sig_atomic_t running = 1;
 void signalHandler(int signum) {
     std::cout << "\n[RawSink] Shutdown signal received..." << std::endl;
     running = 0;
+}
+
+bool is_truthy_env(const char* value) {
+    if (!value) return false;
+    std::string v(value);
+    std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return v == "1" || v == "true" || v == "yes" || v == "on";
+}
+
+bool upload_file_to_gcs(const std::string& local_file) {
+    const char* bucket = std::getenv("RAW_GCS_BUCKET");
+    if (!bucket || std::string(bucket).empty()) return false;
+
+    std::string prefix = "ultrasound/raw";
+    if (const char* env_prefix = std::getenv("RAW_GCS_PREFIX")) {
+        if (std::string(env_prefix).size() > 0) prefix = env_prefix;
+    }
+    if (!prefix.empty() && prefix.back() == '/') prefix.pop_back();
+
+    const std::string filename = std::filesystem::path(local_file).filename().string();
+    const std::string gs_uri = "gs://" + std::string(bucket) + "/" + prefix + "/" + filename;
+
+    std::string cmd = "gsutil cp \"" + local_file + "\" \"" + gs_uri + "\"";
+    const char* project = std::getenv("GCP_PROJECT_ID");
+    if (project && std::string(project).size() > 0) {
+        cmd = "gsutil -u \"" + std::string(project) + "\" cp \"" + local_file + "\" \"" + gs_uri + "\"";
+    }
+
+    std::cout << "[RawSink] Uploading burst to " << gs_uri << "..." << std::endl;
+    const int rc = std::system(cmd.c_str());
+    if (rc != 0) {
+        std::cerr << "[RawSink] GCS upload failed (exit code " << rc << "). Keeping local file." << std::endl;
+        return false;
+    }
+
+    std::cout << "[RawSink] GCS upload complete." << std::endl;
+    return true;
 }
 
 // =================================================================================================
@@ -106,6 +147,19 @@ void write_burst_csv(const std::vector<std::vector<uint8_t>>& buffer, int width,
     
     csv_file.close();
     std::cout << "[RawSink] Burst written." << std::endl;
+
+    // Optional Kappa archive path: upload immutable raw burst to object storage.
+    const bool uploaded = upload_file_to_gcs(filename);
+    const bool keep_local = is_truthy_env(std::getenv("RAW_GCS_KEEP_LOCAL"));
+    if (uploaded && !keep_local) {
+        std::error_code ec;
+        std::filesystem::remove(filename, ec);
+        if (ec) {
+            std::cerr << "[RawSink] Uploaded but failed to remove local file: " << ec.message() << std::endl;
+        } else {
+            std::cout << "[RawSink] Removed local file after successful upload." << std::endl;
+        }
+    }
 }
 
 // =================================================================================================
