@@ -19,7 +19,7 @@
 
 namespace {
 
-const char* DEFAULT_TOPIC_OUT = "ultrasound.clean_replay";
+const char* DEFAULT_TOPIC_OUT = "ultrasound_clean_replay";
 const char* DEFAULT_GCS_PREFIX = "ultrasound/processed";
 const int DEFAULT_FRAME_INTERVAL_MS = 20;
 const uint64_t DEFAULT_DEVICE_ID = 9002;

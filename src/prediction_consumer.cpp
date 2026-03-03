@@ -4,7 +4,7 @@
 #include <cstdlib>
 #include <librdkafka/rdkafka.h>
 
-const char* TOPIC_IN = "model.predictions";
+const char* TOPIC_IN = "model_predictions";
 
 volatile sig_atomic_t running = 1;
 

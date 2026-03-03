@@ -70,7 +70,7 @@ APPNAME = us_acq
 PREPROCESS_APP = preprocess
 OUTPUT_APP = output
 PREDICTION_CONSUMER_APP = prediction_consumer
-PROCESS_SINK_APP = process_sink
+PROCESSED_SINK_APP = processed_sink
 REPLAY_RAW_APP = replay_raw
 REPLAY_PROCESSED_APP = replay_processed
 
@@ -92,8 +92,8 @@ RAW_SINK_OBJ = $(BUILDDIR)/raw_sink.o
 PREDICTION_CONSUMER_SRC = $(SRCDIR)/prediction_consumer.cpp
 PREDICTION_CONSUMER_OBJ = $(BUILDDIR)/prediction_consumer.o
 
-PROCESS_SINK_SRC = $(SRCDIR)/processed_sink.cpp
-PROCESS_SINK_OBJ = $(BUILDDIR)/process_sink.o
+PROCESSED_SINK_SRC = $(SRCDIR)/processed_sink.cpp
+PROCESSED_SINK_OBJ = $(BUILDDIR)/processed_sink.o
 
 REPLAY_RAW_SRC = $(SRCDIR)/replay_raw.cpp
 REPLAY_RAW_OBJ = $(BUILDDIR)/replay_raw.o
@@ -104,7 +104,7 @@ REPLAY_PROCESSED_OBJ = $(BUILDDIR)/replay_processed.o
 COMMON_OBJ = $(BUILDDIR)/Utils.o
 
 # Default target
-all: check-deps $(APPNAME) $(PREPROCESS_APP) $(OUTPUT_APP) raw_sink $(PREDICTION_CONSUMER_APP) $(PROCESS_SINK_APP) $(REPLAY_RAW_APP) $(REPLAY_PROCESSED_APP)
+all: check-deps $(APPNAME) $(PREPROCESS_APP) $(OUTPUT_APP) raw_sink $(PREDICTION_CONSUMER_APP) $(PROCESSED_SINK_APP) $(REPLAY_RAW_APP) $(REPLAY_PROCESSED_APP)
 
 # Dependency check (auto-install if missing)
 .PHONY: check-deps
@@ -175,12 +175,12 @@ $(PREDICTION_CONSUMER_APP): $(PREDICTION_CONSUMER_OBJ)
 	@echo "Run with: ./$(PREDICTION_CONSUMER_APP)"
 	@echo ""
 
-$(PROCESS_SINK_APP): $(PROCESS_SINK_OBJ) $(COMMON_OBJ)
-	@echo "Linking $(PROCESS_SINK_APP)..."
+$(PROCESSED_SINK_APP): $(PROCESSED_SINK_OBJ) $(COMMON_OBJ)
+	@echo "Linking $(PROCESSED_SINK_APP)..."
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 	@echo "✅ Process sink build successful!"
 	@echo ""
-	@echo "Run with: ./$(PROCESS_SINK_APP)"
+	@echo "Run with: ./$(PROCESSED_SINK_APP)"
 	@echo ""
 
 $(REPLAY_RAW_APP): $(REPLAY_RAW_OBJ)
@@ -211,7 +211,7 @@ $(BUILDDIR):
 # Clean
 clean:
 	@echo "Cleaning build artifacts..."
-	rm -rf $(BUILDDIR) $(APPNAME) $(APPNAME).exe $(PREPROCESS_APP) $(PREPROCESS_APP).exe $(OUTPUT_APP) $(OUTPUT_APP).exe $(PREDICTION_CONSUMER_APP) $(PREDICTION_CONSUMER_APP).exe $(PROCESS_SINK_APP) $(PROCESS_SINK_APP).exe $(REPLAY_RAW_APP) $(REPLAY_RAW_APP).exe $(REPLAY_PROCESSED_APP) $(REPLAY_PROCESSED_APP).exe
+	rm -rf $(BUILDDIR) $(APPNAME) $(APPNAME).exe $(PREPROCESS_APP) $(PREPROCESS_APP).exe $(OUTPUT_APP) $(OUTPUT_APP).exe $(PREDICTION_CONSUMER_APP) $(PREDICTION_CONSUMER_APP).exe $(PROCESSED_SINK_APP) $(PROCESSED_SINK_APP).exe $(REPLAY_RAW_APP) $(REPLAY_RAW_APP).exe $(REPLAY_PROCESSED_APP) $(REPLAY_PROCESSED_APP).exe
 	@echo "✅ Clean complete"
 
 # Help
@@ -222,7 +222,7 @@ help:
 	@echo "  make us_acq        - Build only the producer"
 	@echo "  make preprocess    - Build only the preprocess service"
 	@echo "  make output        - Build only the output service"
-	@echo "  make $(PROCESS_SINK_APP) - Build only the processed-frame sink"
+	@echo "  make $(PROCESSED_SINK_APP) - Build only the processed-frame sink"
 	@echo "  make $(PREDICTION_CONSUMER_APP) - Build only the model prediction consumer"
 	@echo "  make $(REPLAY_RAW_APP) - Build only the raw replay source"
 	@echo "  make $(REPLAY_PROCESSED_APP) - Build only the processed replay source"

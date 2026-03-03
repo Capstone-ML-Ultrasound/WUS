@@ -57,7 +57,7 @@ services:
         condition: service_healthy
     environment:
       BOOTSTRAP_SERVERS: kafka:29092
-      TOPIC_IN: ultrasound.clean
+      TOPIC_IN: ultrasound_clean
     restart: on-failure
     profiles:
       - live
@@ -71,7 +71,7 @@ services:
         condition: service_healthy
     environment:
       BOOTSTRAP_SERVERS: kafka:29092
-      TOPIC_IN: ultrasound.clean_replay
+      TOPIC_IN: ultrasound_clean_replay
     restart: on-failure
     profiles:
       - replay-preprocess
@@ -111,9 +111,9 @@ services:
     profiles:
       - testing
 
-  process_sink:
+  processed_sink:
     build: .
-    command: ./process_sink
+    command: ./processed_sink
     depends_on:
       kafka:
         condition: service_healthy
@@ -122,7 +122,7 @@ services:
       PROCESSED_GCS_BUCKET: ${PROCESSED_GCS_BUCKET:-processed-bucket-capstone}
       PROCESSED_GCS_PREFIX: ${PROCESSED_GCS_PREFIX:-ultrasound/processed}
       PROCESSED_GCS_KEEP_LOCAL: ${PROCESSED_GCS_KEEP_LOCAL:-false}
-      PROCESS_SINK_IDLE_FLUSH_MS: ${PROCESS_SINK_IDLE_FLUSH_MS:-5000}
+      PROCESSED_SINK_IDLE_FLUSH_MS: ${PROCESSED_SINK_IDLE_FLUSH_MS:-5000}
       GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
     volumes:
@@ -170,7 +170,7 @@ services:
       REPLAY_FILE_PATTERN: ${REPLAY_PROCESSED_FILE_PATTERN:-}
       REPLAY_LOOP: ${REPLAY_PROCESSED_LOOP:-false}
       REPLAY_FRAME_INTERVAL_MS: ${REPLAY_PROCESSED_FRAME_INTERVAL_MS:-20}
-      REPLAY_TOPIC_OUT: ultrasound.clean_replay
+      REPLAY_TOPIC_OUT: ultrasound_clean_replay
       GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
     volumes:

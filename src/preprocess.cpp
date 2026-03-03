@@ -16,7 +16,7 @@
 
 // Kafka
 const char* TOPIC_IN_DEFAULT  = "ultrasound_raw_data";
-const char* TOPIC_OUT = "ultrasound.clean";
+const char* TOPIC_OUT = "ultrasound_clean";
 
 // Signal Processing
 const double TGC_ALPHA   = 0.000004;

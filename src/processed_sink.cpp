@@ -15,7 +15,7 @@
 
 #include "USFrameProtocol.h"
 
-const char* TOPIC_IN = "ultrasound.clean";
+const char* TOPIC_IN = "ultrasound_clean";
 const int BURST_SIZE = 1000;
 const int POLL_TIMEOUT_MS = 500;
 
@@ -165,7 +165,7 @@ void consume_and_process(rd_kafka_t* consumer) {
     std::vector<std::vector<uint8_t>> frame_buffer;
     frame_buffer.reserve(BURST_SIZE);
     int total_frames = 0;
-    const int idle_flush_ms = get_nonnegative_env_int("PROCESS_SINK_IDLE_FLUSH_MS", 0);
+    const int idle_flush_ms = get_nonnegative_env_int("PROCESSED_SINK_IDLE_FLUSH_MS", 0);
     int idle_elapsed_ms = 0;
 
     while (running) {
@@ -243,7 +243,7 @@ int main() {
     std::string brokers = "localhost:9092";
     if (const char* env = std::getenv("BOOTSTRAP_SERVERS")) brokers = env;
 
-    rd_kafka_t* consumer = create_consumer(brokers, "process_sink_group");
+    rd_kafka_t* consumer = create_consumer(brokers, "processed_sink_group");
     if (!consumer) return 1;
 
     consume_and_process(consumer);

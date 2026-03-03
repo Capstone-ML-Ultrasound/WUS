@@ -15,8 +15,8 @@
 // Configuration
 // =================================================================================================
 
-const char* TOPIC_IN_DEFAULT  = "ultrasound.clean";
-const char* TOPIC_OUT = "model.predictions";
+const char* TOPIC_IN_DEFAULT  = "ultrasound_clean";
+const char* TOPIC_OUT = "model_predictions";
 
 volatile sig_atomic_t running = 1;
 

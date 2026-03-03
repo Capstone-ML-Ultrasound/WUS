@@ -6,16 +6,16 @@ This project implements a streaming ultrasound pipeline over Kafka, including li
 
 Core topics:
 - `ultrasound_raw_data`: live raw frames from hardware.
-- `ultrasound.clean`: preprocessed frames.
-- `model.predictions`: prediction messages from `output`.
+- `ultrasound_clean`: preprocessed frames.
+- `model_predictions`: prediction messages from `output`.
 
 Main components:
 1. `us_acq` (host process): acquires from hardware and publishes raw frames.
 2. `preprocess`: consumes raw frames and publishes cleaned frames.
-3. `output`: consumes cleaned frames and publishes `model.predictions`.
+3. `output`: consumes cleaned frames and publishes `model_predictions`.
 4. `prediction_consumer`: consumes and logs prediction events.
 5. `raw_sink`: consumes `ultrasound_raw_data`, writes burst CSVs, optionally uploads to GCS.
-6. `process_sink`: consumes `ultrasound.clean`, writes burst CSVs, optionally uploads to GCS.
+6. `processed_sink`: consumes `ultrasound_clean`, writes burst CSVs, optionally uploads to GCS.
 7. `replay_raw`: reads archived raw CSVs from GCS and republishes to replay raw topic.
 8. `replay_processed`: reads archived processed CSVs from GCS and republishes to replay processed topic.
 
@@ -26,7 +26,7 @@ Main components:
 | Profile | Services enabled |
 | --- | --- |
 | `live` | `preprocess-live`, `output-live`, `prediction_consumer` |
-| `testing` | `raw_sink`, `process_sink` |
+| `testing` | `raw_sink`, `processed_sink` |
 | `replay-raw` | `replay_raw_service`, `preprocess-replay`, `output-live`, `prediction_consumer` |
 | `replay-preprocess` | `replay_processed_service`, `output-replay-preprocess`, `prediction_consumer` |
 
@@ -63,11 +63,11 @@ Raw archive sink (`raw_sink`):
 - `RAW_GCS_PREFIX` (default: `ultrasound/raw`)
 - `RAW_GCS_KEEP_LOCAL` (default: `false`)
 
-Processed archive sink (`process_sink`):
+Processed archive sink (`processed_sink`):
 - `PROCESSED_GCS_BUCKET` (default: `processed-bucket-capstone`)
 - `PROCESSED_GCS_PREFIX` (default: `ultrasound/processed`)
 - `PROCESSED_GCS_KEEP_LOCAL` (default: `false`)
-- `PROCESS_SINK_IDLE_FLUSH_MS` (default: `5000` in compose; set `0` to disable)
+- `PROCESSED_SINK_IDLE_FLUSH_MS` (default: `5000` in compose; set `0` to disable)
 
 Replay raw (`replay_raw_service`):
 - `REPLAY_RAW_GCS_PREFIX` (default: `ultrasound/raw`)
@@ -109,7 +109,7 @@ make us_acq
 make preprocess
 make output
 make prediction_consumer
-make process_sink
+make processed_sink
 make replay_raw
 make replay_processed
 ```
