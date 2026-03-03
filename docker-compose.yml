@@ -1,7 +1,6 @@
 services:
   kafka:
     image: apache/kafka:3.7.0
-    container_name: kafka
     ports:
       - "9092:9092"
     environment:
@@ -24,39 +23,82 @@ services:
       timeout: 10s
       retries: 5
 
-  preprocess:
+  preprocess-live:
     build: .
-    container_name: preprocess
+    command: ./preprocess
     depends_on:
       kafka:
         condition: service_healthy
     environment:
       BOOTSTRAP_SERVERS: kafka:29092
+      TOPIC_IN: ultrasound_raw_data
     restart: on-failure
+    profiles:
+      - live
 
-  output:
+  preprocess-replay:
     build: .
-    container_name: output
+    command: ./preprocess
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      TOPIC_IN: ultrasound_raw_data_replay
+    restart: on-failure
+    profiles:
+      - replay-raw
+
+  output-live:
+    build: .
     command: ./output
     depends_on:
       kafka:
         condition: service_healthy
     environment:
       BOOTSTRAP_SERVERS: kafka:29092
-    volumes:
-      - ./data:/app/data
+      TOPIC_IN: ultrasound.clean
     restart: on-failure
+    profiles:
+      - live
+      - replay-raw
+
+  output-replay-preprocess:
+    build: .
+    command: ./output
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      TOPIC_IN: ultrasound.clean_replay
+    restart: on-failure
+    profiles:
+      - replay-preprocess
+
+  prediction_consumer:
+    build: .
+    command: ./prediction_consumer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+    restart: on-failure
+    profiles:
+      - live
+      - replay-raw
+      - replay-preprocess
 
   raw_sink:
     build: .
-    container_name: raw_sink
     command: ./raw_sink
     depends_on:
       kafka:
         condition: service_healthy
     environment:
       BOOTSTRAP_SERVERS: kafka:29092
-      RAW_GCS_BUCKET: raw-capstone-bucket
+      RAW_GCS_BUCKET: ${RAW_GCS_BUCKET:-raw-capstone-bucket}
       RAW_GCS_PREFIX: ${RAW_GCS_PREFIX:-ultrasound/raw}
       RAW_GCS_KEEP_LOCAL: ${RAW_GCS_KEEP_LOCAL:-false}
       GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
@@ -66,3 +108,75 @@ services:
       - ./secrets:/app/secrets:ro
       - ${APPDATA}/gcloud:/root/.config/gcloud:ro
     restart: on-failure
+    profiles:
+      - testing
+
+  process_sink:
+    build: .
+    command: ./process_sink
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      PROCESSED_GCS_BUCKET: ${PROCESSED_GCS_BUCKET:-processed-bucket-capstone}
+      PROCESSED_GCS_PREFIX: ${PROCESSED_GCS_PREFIX:-ultrasound/processed}
+      PROCESSED_GCS_KEEP_LOCAL: ${PROCESSED_GCS_KEEP_LOCAL:-false}
+      PROCESS_SINK_IDLE_FLUSH_MS: ${PROCESS_SINK_IDLE_FLUSH_MS:-5000}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      - ./data:/app/data
+      - ./secrets:/app/secrets:ro
+      - ${APPDATA}/gcloud:/root/.config/gcloud:ro
+    restart: on-failure
+    profiles:
+      - testing
+
+  replay_raw_service:
+    build: .
+    command: ./replay_raw
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      REPLAY_GCS_BUCKET: ${RAW_GCS_BUCKET:-raw-capstone-bucket}
+      REPLAY_GCS_PREFIX: ${REPLAY_RAW_GCS_PREFIX:-ultrasound/raw}
+      REPLAY_FILE_PATTERN: ${REPLAY_RAW_FILE_PATTERN:-}
+      REPLAY_LOOP: ${REPLAY_RAW_LOOP:-false}
+      REPLAY_FRAME_INTERVAL_MS: ${REPLAY_RAW_FRAME_INTERVAL_MS:-20}
+      REPLAY_TOPIC_OUT: ultrasound_raw_data_replay
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      - ./data:/app/data
+      - ./secrets:/app/secrets:ro
+      - ${APPDATA}/gcloud:/root/.config/gcloud:ro
+    restart: on-failure
+    profiles:
+      - replay-raw
+
+  replay_processed_service:
+    build: .
+    command: ./replay_processed
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      REPLAY_GCS_BUCKET: ${PROCESSED_GCS_BUCKET:-processed-bucket-capstone}
+      REPLAY_GCS_PREFIX: ${REPLAY_PROCESSED_GCS_PREFIX:-ultrasound/processed}
+      REPLAY_FILE_PATTERN: ${REPLAY_PROCESSED_FILE_PATTERN:-}
+      REPLAY_LOOP: ${REPLAY_PROCESSED_LOOP:-false}
+      REPLAY_FRAME_INTERVAL_MS: ${REPLAY_PROCESSED_FRAME_INTERVAL_MS:-20}
+      REPLAY_TOPIC_OUT: ultrasound.clean_replay
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      - ./data:/app/data
+      - ./secrets:/app/secrets:ro
+      - ${APPDATA}/gcloud:/root/.config/gcloud:ro
+    restart: on-failure
+    profiles:
+      - replay-preprocess

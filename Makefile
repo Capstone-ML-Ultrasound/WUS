@@ -69,26 +69,42 @@ BUILDDIR = build
 APPNAME = us_acq
 PREPROCESS_APP = preprocess
 OUTPUT_APP = output
+PREDICTION_CONSUMER_APP = prediction_consumer
+PROCESS_SINK_APP = process_sink
+REPLAY_RAW_APP = replay_raw
+REPLAY_PROCESSED_APP = replay_processed
 
 # Sources and objects
 SRC = $(wildcard $(SRCDIR)/*.cpp)
 # APP_SRC excludes service-specific files
-APP_SRC = $(filter-out $(SRCDIR)/preprocess.cpp $(SRCDIR)/output.cpp $(SRCDIR)/raw_sink.cpp, $(SRC))
+APP_SRC = $(filter-out $(SRCDIR)/preprocess.cpp $(SRCDIR)/ml_model.cpp $(SRCDIR)/raw_sink.cpp $(SRCDIR)/prediction_consumer.cpp $(SRCDIR)/processed_sink.cpp $(SRCDIR)/replay_raw.cpp $(SRCDIR)/replay_processed.cpp, $(SRC))
 APP_OBJ = $(patsubst $(SRCDIR)/%.cpp, $(BUILDDIR)/%.o, $(APP_SRC))
 
 PREPROCESS_SRC = $(SRCDIR)/preprocess.cpp
 PREPROCESS_OBJ = $(BUILDDIR)/preprocess.o
 
-OUTPUT_SRC = $(SRCDIR)/output.cpp
+OUTPUT_SRC = $(SRCDIR)/ml_model.cpp
 OUTPUT_OBJ = $(BUILDDIR)/output.o
 
 RAW_SINK_SRC = $(SRCDIR)/raw_sink.cpp
 RAW_SINK_OBJ = $(BUILDDIR)/raw_sink.o
 
+PREDICTION_CONSUMER_SRC = $(SRCDIR)/prediction_consumer.cpp
+PREDICTION_CONSUMER_OBJ = $(BUILDDIR)/prediction_consumer.o
+
+PROCESS_SINK_SRC = $(SRCDIR)/processed_sink.cpp
+PROCESS_SINK_OBJ = $(BUILDDIR)/process_sink.o
+
+REPLAY_RAW_SRC = $(SRCDIR)/replay_raw.cpp
+REPLAY_RAW_OBJ = $(BUILDDIR)/replay_raw.o
+
+REPLAY_PROCESSED_SRC = $(SRCDIR)/replay_processed.cpp
+REPLAY_PROCESSED_OBJ = $(BUILDDIR)/replay_processed.o
+
 COMMON_OBJ = $(BUILDDIR)/Utils.o
 
 # Default target
-all: check-deps $(APPNAME) $(PREPROCESS_APP) $(OUTPUT_APP) raw_sink
+all: check-deps $(APPNAME) $(PREPROCESS_APP) $(OUTPUT_APP) raw_sink $(PREDICTION_CONSUMER_APP) $(PROCESS_SINK_APP) $(REPLAY_RAW_APP) $(REPLAY_PROCESSED_APP)
 
 # Dependency check (auto-install if missing)
 .PHONY: check-deps
@@ -151,6 +167,38 @@ raw_sink: $(RAW_SINK_OBJ) $(COMMON_OBJ)
 	@echo "Run with: ./raw_sink"
 	@echo ""
 
+$(PREDICTION_CONSUMER_APP): $(PREDICTION_CONSUMER_OBJ)
+	@echo "Linking $(PREDICTION_CONSUMER_APP)..."
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+	@echo "✅ Prediction consumer build successful!"
+	@echo ""
+	@echo "Run with: ./$(PREDICTION_CONSUMER_APP)"
+	@echo ""
+
+$(PROCESS_SINK_APP): $(PROCESS_SINK_OBJ) $(COMMON_OBJ)
+	@echo "Linking $(PROCESS_SINK_APP)..."
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+	@echo "✅ Process sink build successful!"
+	@echo ""
+	@echo "Run with: ./$(PROCESS_SINK_APP)"
+	@echo ""
+
+$(REPLAY_RAW_APP): $(REPLAY_RAW_OBJ)
+	@echo "Linking $(REPLAY_RAW_APP)..."
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+	@echo "✅ Replay raw build successful!"
+	@echo ""
+	@echo "Run with: ./$(REPLAY_RAW_APP)"
+	@echo ""
+
+$(REPLAY_PROCESSED_APP): $(REPLAY_PROCESSED_OBJ)
+	@echo "Linking $(REPLAY_PROCESSED_APP)..."
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+	@echo "✅ Replay processed build successful!"
+	@echo ""
+	@echo "Run with: ./$(REPLAY_PROCESSED_APP)"
+	@echo ""
+
 # Compile step (make sure build dir exists)
 $(BUILDDIR)/%.o: $(SRCDIR)/%.cpp | $(BUILDDIR)
 	@echo "Compiling $<..."
@@ -163,7 +211,7 @@ $(BUILDDIR):
 # Clean
 clean:
 	@echo "Cleaning build artifacts..."
-	rm -rf $(BUILDDIR) $(APPNAME) $(APPNAME).exe $(PREPROCESS_APP) $(PREPROCESS_APP).exe $(OUTPUT_APP) $(OUTPUT_APP).exe
+	rm -rf $(BUILDDIR) $(APPNAME) $(APPNAME).exe $(PREPROCESS_APP) $(PREPROCESS_APP).exe $(OUTPUT_APP) $(OUTPUT_APP).exe $(PREDICTION_CONSUMER_APP) $(PREDICTION_CONSUMER_APP).exe $(PROCESS_SINK_APP) $(PROCESS_SINK_APP).exe $(REPLAY_RAW_APP) $(REPLAY_RAW_APP).exe $(REPLAY_PROCESSED_APP) $(REPLAY_PROCESSED_APP).exe
 	@echo "✅ Clean complete"
 
 # Help
@@ -174,8 +222,14 @@ help:
 	@echo "  make us_acq        - Build only the producer"
 	@echo "  make preprocess    - Build only the preprocess service"
 	@echo "  make output        - Build only the output service"
+	@echo "  make $(PROCESS_SINK_APP) - Build only the processed-frame sink"
+	@echo "  make $(PREDICTION_CONSUMER_APP) - Build only the model prediction consumer"
+	@echo "  make $(REPLAY_RAW_APP) - Build only the raw replay source"
+	@echo "  make $(REPLAY_PROCESSED_APP) - Build only the processed replay source"
 	@echo "  make clean         - Remove build artifacts"
 	@echo "  make help          - Show this help message"
 	@echo ""
 	@echo "Current platform: $(PLATFORM)"
 	@echo "Port example: $(PORT_EXAMPLE)"
+
+

@@ -1,131 +1,115 @@
 # Wireless Ultrasound System (WUS)
 
-This project implements a streaming data pipeline for ultrasound A-scan frames. It captures data from hardware, processes it in real-time (TGC, Envelope Detection, Log Compression, Gaussian Blur), and persists the results.
+This project implements a streaming ultrasound pipeline over Kafka, including live ingestion, preprocessing, ML-style prediction publishing, archival sinks, and replay services.
 
-## � Architecture
+## Architecture
 
-The pipeline consists of four main components connected via **Apache Kafka**:
+Core topics:
+- `ultrasound_raw_data`: live raw frames from hardware.
+- `ultrasound.clean`: preprocessed frames.
+- `model.predictions`: prediction messages from `output`.
 
-1.  **Producer (`us_acq`)**:
-    *   Connects to the ultrasound hardware via USB/Serial.
-    *   Acquires raw A-scans via SPI Function 4 (Auto-sampling).
-    *   Encodes raw data with `USFrameProtocol` (V1).
-    *   Publishes to Kafka topic: `ultrasound_raw_data`.
+Main components:
+1. `us_acq` (host process): acquires from hardware and publishes raw frames.
+2. `preprocess`: consumes raw frames and publishes cleaned frames.
+3. `output`: consumes cleaned frames and publishes `model.predictions`.
+4. `prediction_consumer`: consumes and logs prediction events.
+5. `raw_sink`: consumes `ultrasound_raw_data`, writes burst CSVs, optionally uploads to GCS.
+6. `process_sink`: consumes `ultrasound.clean`, writes burst CSVs, optionally uploads to GCS.
+7. `replay_raw`: reads archived raw CSVs from GCS and republishes to replay raw topic.
+8. `replay_processed`: reads archived processed CSVs from GCS and republishes to replay processed topic.
 
-2.  **Preprocess Service (`preprocess`)**:
-    *   Consumes raw frames.
-    *   **Signal Processing**:
-        *   Time Gain Compensation (TGC).
-        *   DC Removal.
-        *   Envelope Detection (Hilbert Transform via Armadillo).
-        *   Log Compression.
-        *   **Separable Gaussian Blur**: Using a sliding window buffer (~30 frames) to apply smoothing in both Depth (1D) and Time (Weighted Average).
-    *   Publishes processed frames to Kafka topic: `ultrasound.clean`.
-    *   Uses `USProcessedFrameHeader` (V2 Extension) to track provenance.
+## Docker Compose Profiles
 
-3.  **Output Service (`output`)**:
-    *   Consumes processed frames from `ultrasound.clean`.
-    *   Writes frames to CSV file (`ultrasound_output.csv`).
+`kafka` always starts when you run `docker compose up ...`. Other services are controlled by profiles.
 
-4.  **Raw Sink (`raw_sink`)**:
-    *   Consumes immutable raw frames from `ultrasound_raw_data`.
-    *   Writes burst CSV files and uploads them to Google Cloud Storage for replayability.
-    *   Optional local retention controlled by `RAW_GCS_KEEP_LOCAL`.
+| Profile | Services enabled |
+| --- | --- |
+| `live` | `preprocess-live`, `output-live`, `prediction_consumer` |
+| `testing` | `raw_sink`, `process_sink` |
+| `replay-raw` | `replay_raw_service`, `preprocess-replay`, `output-live`, `prediction_consumer` |
+| `replay-preprocess` | `replay_processed_service`, `output-replay-preprocess`, `prediction_consumer` |
 
-5.  **Kafka**: Message broker handling the stream.
+## Docker Quick Start
 
----
+Use one of these common launch patterns:
 
-## 🐳 Docker Quick Start (Recommended)
-
-You can run the processing and output backend in Docker.
-
-1.  **Start Services**:
-    ```bash
-    docker-compose up --build
-    ```
-    *   Starts **Kafka**, **Preprocess**, **Output**, and **RawSink** containers.
-    *   **Data** is saved to the `./data` folder on your host machine.
-
-2.  **Enable object-store archive for raw replay (Google Cloud Storage)**:
-    Set these environment variables before `docker-compose up`:
-    ```bash
-    export RAW_GCS_BUCKET=my-ultrasound-raw-archive
-    export RAW_GCS_PREFIX=ultrasound/raw
-    export RAW_GCS_KEEP_LOCAL=false
-    export GCP_PROJECT_ID=my-gcp-project
-
-    # Path inside the container (mounted from ./secrets by docker-compose)
-    export GOOGLE_APPLICATION_CREDENTIALS=/app/secrets/gcp-sa.json
-    ```
-    If `RAW_GCS_BUCKET` is empty, `raw_sink` keeps writing local CSV only.
-
-3.  **Run Producer (Host Machine)**:
-    *   *Note: The producer must run on the host to access the USB hardware (COM port).*
-    *   **Compile**:
-        ```bash
-        make us_acq
-        ```
-    *   **Run**:
-        ```bash
-        ./us_acq.exe
-        ```
-
----
-
-## 🛠 Manual Setup (Windows/MinGW)
-
-If you prefer to run everything locally without Docker:
-
-### 1. Prerequisites
-*   **librdkafka** (Kafka C library):
-    ```bash
-    pacman -S mingw-w64-x86_64-librdkafka
-    ```
-*   **Armadillo** (Linear Algebra & Signal Processing):
-    ```bash
-    pacman -S mingw-w64-x86_64-armadillo
-    ```
-*   **Boost** (for serial communication):
-    ```bash
-    pacman -S mingw-w64-x86_64-boost
-    ```
-*   **Compiler**: GCC/G++ (MinGW64).
-
-### 2. Compile
-Use the provided `Makefile` (defaults to building all services):
 ```bash
-# Build everything
-make
+# Live pipeline (no archival sinks)
+docker compose --profile live up --build
 
-# Build individual services
-make us_acq       # Producer
-make preprocess   # Signal Processing
-make output       # CSV Writer
+# Live pipeline + raw/processed archival sinks
+docker compose --profile live --profile testing up --build
+
+# Replay archived raw data through preprocess + output
+docker compose --profile replay-raw up --build
+
+# Replay archived processed data directly into output
+docker compose --profile replay-preprocess up --build
 ```
 
-### 3. Run
-Open separate terminals for each service:
+To inspect exactly what will run for your selected profiles:
 
-1.  **Kafka**: Ensure Kafka is running on `localhost:9092`.
-2.  **Preprocess**:
-    ```bash
-    ./preprocess.exe
-    ```
-3.  **Output**:
-    ```bash
-    ./output.exe
-    ```
-4.  **Producer**:
-    ```bash
-    ./us_acq.exe
-    ```
+```bash
+docker compose --profile live --profile testing config
+```
 
----
+## Environment Variables (GCS and Replay)
 
-## � Protocol & Traceability
-The system maintains strict record identity:
-*   **Identity**: Generally, `Output Frame N` corresponds to `Input Frame N`. In the sliding window blur, `Output Frame N` is the smoothed version of `Input Frame N` (the center of the window).
-*   **Headers**: 
-    *   Input: `USFrameHeader` (Capture TS, Sequence ID).
-    *   Output: `USProcessedFrameHeader` (Inherits Capture TS/Seq, adds Processing TS, Window Size, Sigma parameters).
+You can export these in your shell or place them in a `.env` file next to `docker-compose.yml`.
+
+Raw archive sink (`raw_sink`):
+- `RAW_GCS_BUCKET` (default: `raw-capstone-bucket`)
+- `RAW_GCS_PREFIX` (default: `ultrasound/raw`)
+- `RAW_GCS_KEEP_LOCAL` (default: `false`)
+
+Processed archive sink (`process_sink`):
+- `PROCESSED_GCS_BUCKET` (default: `processed-bucket-capstone`)
+- `PROCESSED_GCS_PREFIX` (default: `ultrasound/processed`)
+- `PROCESSED_GCS_KEEP_LOCAL` (default: `false`)
+- `PROCESS_SINK_IDLE_FLUSH_MS` (default: `5000` in compose; set `0` to disable)
+
+Replay raw (`replay_raw_service`):
+- `REPLAY_RAW_GCS_PREFIX` (default: `ultrasound/raw`)
+- `REPLAY_RAW_FILE_PATTERN` (optional filter)
+- `REPLAY_RAW_LOOP` (default: `false`)
+- `REPLAY_RAW_FRAME_INTERVAL_MS` (default: `20`)
+
+Replay processed (`replay_processed_service`):
+- `REPLAY_PROCESSED_GCS_PREFIX` (default: `ultrasound/processed`)
+- `REPLAY_PROCESSED_FILE_PATTERN` (optional filter)
+- `REPLAY_PROCESSED_LOOP` (default: `false`)
+- `REPLAY_PROCESSED_FRAME_INTERVAL_MS` (default: `20`)
+
+Shared cloud auth:
+- `GCP_PROJECT_ID`
+- `GOOGLE_APPLICATION_CREDENTIALS` (container path; repo mounts `./secrets:/app/secrets:ro`)
+
+## Producer (Host Machine)
+
+The producer must run on the host to access USB/serial hardware.
+
+```bash
+make us_acq
+./us_acq.exe
+```
+
+## Local Build (No Docker)
+
+Build all binaries:
+
+```bash
+make
+```
+
+Build individual binaries:
+
+```bash
+make us_acq
+make preprocess
+make output
+make prediction_consumer
+make process_sink
+make replay_raw
+make replay_processed
+```

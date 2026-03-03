@@ -25,8 +25,12 @@ COPY . .
 RUN mkdir -p build && \
     g++ -std=c++17 -Wall -Iinclude -o us_acq src/main.cpp src/USBuilder.cpp src/Utils.cpp -lrdkafka -lpthread && \
     g++ -std=c++17 -Wall -Iinclude -o preprocess src/preprocess.cpp src/Utils.cpp -lrdkafka -larmadillo -lpthread && \
-    g++ -std=c++17 -Wall -Iinclude -o output src/output.cpp src/Utils.cpp -lrdkafka -lpthread && \
-    g++ -std=c++17 -Wall -Iinclude -o raw_sink src/raw_sink.cpp -lrdkafka -lpthread
+    g++ -std=c++17 -Wall -Iinclude -o output src/ml_model.cpp src/Utils.cpp -lrdkafka -lpthread && \
+    g++ -std=c++17 -Wall -Iinclude -o raw_sink src/raw_sink.cpp -lrdkafka -lpthread && \
+    g++ -std=c++17 -Wall -Iinclude -o process_sink src/processed_sink.cpp src/Utils.cpp -lrdkafka -lpthread && \
+    g++ -std=c++17 -Wall -Iinclude -o replay_raw src/replay_raw.cpp -lrdkafka -lpthread && \
+    g++ -std=c++17 -Wall -Iinclude -o replay_processed src/replay_processed.cpp -lrdkafka -lpthread && \
+    g++ -std=c++17 -Wall -Iinclude -o prediction_consumer src/prediction_consumer.cpp -lrdkafka -lpthread
 
 # Runtime Stage
 FROM ubuntu:22.04
@@ -52,9 +56,15 @@ COPY --from=builder /app/us_acq .
 COPY --from=builder /app/preprocess .
 COPY --from=builder /app/output .
 COPY --from=builder /app/raw_sink .
+COPY --from=builder /app/process_sink .
+COPY --from=builder /app/replay_raw .
+COPY --from=builder /app/replay_processed .
+COPY --from=builder /app/prediction_consumer .
 
 # Create data directory for CSV output
 RUN mkdir -p data
 
 # Default command (can be overridden by docker-compose)
 CMD ["./preprocess"]
+
+

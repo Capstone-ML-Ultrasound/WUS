@@ -15,7 +15,7 @@
 // =================================================================================================
 
 // Kafka
-const char* TOPIC_IN  = "ultrasound_raw_data";
+const char* TOPIC_IN_DEFAULT  = "ultrasound_raw_data";
 const char* TOPIC_OUT = "ultrasound.clean";
 
 // Signal Processing
@@ -122,15 +122,19 @@ arma::vec generate_gaussian_kernel(double sigma) {
 // Processing Loop
 // =================================================================================================
 
-void process_stream(rd_kafka_t* consumer, rd_kafka_t* producer, rd_kafka_topic_t* producer_topic) {
+void process_stream(
+    rd_kafka_t* consumer,
+    rd_kafka_t* producer,
+    rd_kafka_topic_t* producer_topic,
+    const std::string& topic_in) {
     
     // 1. Subscribe
     rd_kafka_topic_partition_list_t *subscription = rd_kafka_topic_partition_list_new(1);
-    rd_kafka_topic_partition_list_add(subscription, TOPIC_IN, RD_KAFKA_PARTITION_UA);
+    rd_kafka_topic_partition_list_add(subscription, topic_in.c_str(), RD_KAFKA_PARTITION_UA);
     rd_kafka_subscribe(consumer, subscription);
     rd_kafka_topic_partition_list_destroy(subscription);
 
-    std::cout << "[Preprocess] Subscribed to " << TOPIC_IN << std::endl;
+    std::cout << "[Preprocess] Subscribed to " << topic_in << std::endl;
     std::cout << "[Preprocess] Waiting for frames to fill buffer (" << WINDOW_SIZE << " frames)..." << std::endl;
 
     // 2. Pre-compute Kernels and Curves
@@ -306,6 +310,10 @@ int main(int argc, char** argv) {
     if (const char* env_brokers = std::getenv("BOOTSTRAP_SERVERS")) {
         brokers = env_brokers;
     }
+    std::string topic_in = TOPIC_IN_DEFAULT;
+    if (const char* env_topic_in = std::getenv("TOPIC_IN")) {
+        if (std::strlen(env_topic_in) > 0) topic_in = env_topic_in;
+    }
 
     // 1. Setup Consumer
     std::cout << "[Preprocess] Connecting to Kafka at " << brokers << "..." << std::endl;
@@ -324,7 +332,7 @@ int main(int argc, char** argv) {
     rd_kafka_topic_t* producer_topic = rd_kafka_topic_new(producer, TOPIC_OUT, NULL);
 
     // 4. Run Process Loop
-    process_stream(consumer, producer, producer_topic);
+    process_stream(consumer, producer, producer_topic, topic_in);
 
     // 5. Cleanup
     std::cout << "\n[Preprocess] Cleaning up..." << std::endl;
