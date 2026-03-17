@@ -280,12 +280,14 @@ void process_stream(
             msg.insert(msg.end(), payload_bytes.begin(), payload_bytes.end());
 
             // Produce
+            rd_kafka_poll(producer, 0);
             if (rd_kafka_produce(
                 producer_topic, RD_KAFKA_PARTITION_UA,
                 RD_KAFKA_MSG_F_COPY,
                 msg.data(), msg.size(),
                 NULL, 0, NULL) != 0) {
-                 std::cerr << "[Producer] Failed to send detected frame" << std::endl;
+                 std::cerr << "[Producer] Failed to send detected frame: "
+                           << rd_kafka_err2str(rd_kafka_last_error()) << std::endl;
             } else {
                  rd_kafka_poll(producer, 0); // Trigger callbacks
             }

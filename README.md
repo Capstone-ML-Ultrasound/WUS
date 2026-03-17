@@ -27,6 +27,7 @@ Main components:
 | --- | --- |
 | `live` | `preprocess-live`, `output-live`, `prediction_consumer` |
 | `testing` | `raw_sink`, `processed_sink` |
+| `data-gathering` | `preprocess-live`, `raw_sink`, `processed_sink` |
 | `replay-raw` | `replay_raw_service`, `preprocess-replay`, `output-live`, `prediction_consumer` |
 | `replay-preprocess` | `replay_processed_service`, `output-replay-preprocess`, `prediction_consumer` |
 
@@ -40,6 +41,9 @@ docker compose --profile live up --build
 
 # Live pipeline + raw/processed archival sinks
 docker compose --profile live --profile testing up --build
+
+# Data gathering without model inference or prediction consumption
+docker compose --profile data-gathering up --build
 
 # Replay archived raw data through preprocess + output
 docker compose --profile replay-raw up --build

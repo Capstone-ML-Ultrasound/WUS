@@ -103,7 +103,7 @@ rd_kafka_t* create_consumer(const std::string& brokers, const std::string& group
     return rk;
 }
 
-void write_burst_csv(const std::vector<std::vector<uint8_t>>& buffer) {
+void write_burst_csv(const std::vector<std::vector<uint8_t>>& buffer, const std::vector<int64_t>& timestamps) {
     std::string output_dir = "data/processed_verify";
     if (!std::filesystem::exists(output_dir)) {
         std::filesystem::create_directory(output_dir);
@@ -127,6 +127,15 @@ void write_burst_csv(const std::vector<std::vector<uint8_t>>& buffer) {
     int samples = static_cast<int>(buffer[0].size());
 
     std::cout << "[ProcessSink] Writing burst to " << filename << " (" << samples << "x" << frames << ")..." << std::endl;
+    for (int f = 0; f < frames; ++f) {
+        if (f < static_cast<int>(timestamps.size())) {
+            csv_file << timestamps[f];
+        } else {
+            csv_file << "0";
+        }
+        if (f < frames - 1) csv_file << ",";
+    }
+    csv_file << "\n";
     for (int d = 0; d < samples; ++d) {
         for (int f = 0; f < frames; ++f) {
             if (d < static_cast<int>(buffer[f].size())) {
@@ -164,6 +173,8 @@ void consume_and_process(rd_kafka_t* consumer) {
 
     std::vector<std::vector<uint8_t>> frame_buffer;
     frame_buffer.reserve(BURST_SIZE);
+    std::vector<int64_t> timestamp_buffer;
+    timestamp_buffer.reserve(BURST_SIZE);
     int total_frames = 0;
     const int idle_flush_ms = get_nonnegative_env_int("PROCESSED_SINK_IDLE_FLUSH_MS", 0);
     int idle_elapsed_ms = 0;
@@ -176,9 +187,11 @@ void consume_and_process(rd_kafka_t* consumer) {
             if (idle_flush_ms > 0 && !frame_buffer.empty() && idle_elapsed_ms >= idle_flush_ms) {
                 std::cout << "[ProcessSink] Idle timeout reached. Flushing partial burst of "
                           << frame_buffer.size() << " frame(s)." << std::endl;
-                write_burst_csv(frame_buffer);
+                write_burst_csv(frame_buffer, timestamp_buffer);
                 frame_buffer.clear();
                 frame_buffer.reserve(BURST_SIZE);
+                timestamp_buffer.clear();
+                timestamp_buffer.reserve(BURST_SIZE);
                 idle_elapsed_ms = 0;
             }
             continue;
@@ -215,11 +228,14 @@ void consume_and_process(rd_kafka_t* consumer) {
 
         std::vector<uint8_t> frame(payload_ptr, payload_ptr + payload_size);
         frame_buffer.push_back(std::move(frame));
+        timestamp_buffer.push_back(base_h->timestamp_ns);
 
         if (frame_buffer.size() >= BURST_SIZE) {
-            write_burst_csv(frame_buffer);
+            write_burst_csv(frame_buffer, timestamp_buffer);
             frame_buffer.clear();
             frame_buffer.reserve(BURST_SIZE);
+            timestamp_buffer.clear();
+            timestamp_buffer.reserve(BURST_SIZE);
         }
 
         if (++total_frames % 100 == 0) {
@@ -232,7 +248,7 @@ void consume_and_process(rd_kafka_t* consumer) {
     if (!frame_buffer.empty()) {
         std::cout << "[ProcessSink] Flushing final partial burst of "
                   << frame_buffer.size() << " frame(s) before shutdown." << std::endl;
-        write_burst_csv(frame_buffer);
+        write_burst_csv(frame_buffer, timestamp_buffer);
     }
 }
 
