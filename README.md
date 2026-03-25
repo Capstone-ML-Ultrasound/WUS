@@ -12,7 +12,7 @@ Core topics:
 Main components:
 1. `us_acq` (host process): acquires from hardware and publishes raw frames.
 2. `wrist-inference-*`: Python Kafka worker (`src/wrist_inference.py`) that consumes raw frames, calibrates/normalizes, extracts features, runs model inference, and publishes `model_predictions`.
-3. `visualizer`: Python consumer (`src/visualizer.py`) that consumes prediction events and applies UI-playground motion mapping. It runs headless in Docker by default; GUI mode is available on host with OpenCV.
+3. `visualizer`: Python consumer (`src/visualizer.py`) that consumes `model_predictions` and renders an Etch-a-Sketch-style cursor. It runs headless in Docker by default; GUI mode is available on host with OpenCV.
 4. `raw_sink`: consumes `ultrasound_raw_data`, writes burst CSVs, optionally uploads to GCS.
 5. `replay_raw`: reads archived raw CSVs from GCS and republishes to replay raw topic.
 
@@ -73,6 +73,10 @@ Visualizer (`visualizer`):
 - `VISUALIZER_LOG_EVERY` (default: `10`)
 - `TOPIC_IN` (default: `model_predictions`)
 
+Visualizer connection defaults:
+- `BOOTSTRAP_SERVERS` default is `localhost:9092` for host runs.
+- In Docker Compose, visualizer uses `BOOTSTRAP_SERVERS=kafka:29092`.
+
 Replay raw (`replay_raw_service`):
 - `REPLAY_RAW_GCS_PREFIX` (default: `ultrasound/raw`)
 - `REPLAY_RAW_FILE_PATTERN` (optional filter)
@@ -127,3 +131,38 @@ $env:VISUALIZER_GUI="true"
 $env:BOOTSTRAP_SERVERS="localhost:9092"
 python src/visualizer.py
 ```
+
+Always run live GUI visualizer on host (PowerShell):
+
+```powershell
+# Terminal 1: run Kafka + topic init + inference (without docker visualizer)
+docker compose up --build kafka kafka-init wrist-inference-live
+
+# Terminal 2: run host visualizer in GUI mode
+$env:VISUALIZER_GUI="true"
+$env:BOOTSTRAP_SERVERS="localhost:9092"
+$env:CONSUMER_GROUP_ID="visualizer_gui_host"
+python src/visualizer.py
+```
+
+## Visualizer Details
+
+`src/visualizer.py` accepts prediction payloads in either of these forms:
+- Pipeline payload from `wrist_inference.py`: includes `prediction` and `ready` (plus metadata).
+- Optional vector payload: `hand_state`, `flexion`, `up_down`.
+
+Mapping and behavior:
+- `flexion` drives horizontal velocity after clamping to `[-80, +50]` degrees.
+- A deadzone (`±3` degrees) suppresses jitter near neutral.
+- Velocity is smoothed with an exponential filter (`alpha=0.8`).
+- `hand_state > 0.5` means pen down; otherwise cursor hovers.
+- `up_down` shifts vertical position (defaults to `0` when omitted).
+
+GUI controls:
+- Press `Esc` or `q` to close the window.
+
+Headless logs:
+- In non-GUI mode, visualizer prints one status line every `VISUALIZER_LOG_EVERY` valid frames.
+
+For the offline C++ playground visualizer and CSV replay tooling, see:
+- `ui/ui_playground-new_UI_1/README.md`

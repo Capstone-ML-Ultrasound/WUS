@@ -1,8 +1,10 @@
-# Ground Truth (45 fps)
-010.csv
+UI visualizer notes
+===================
 
-# Predicted Values from DT model (25ish FPS)
-session_010_full_predictions.csv
+For full setup and run instructions, use README.md in this folder.
 
-This regressor outputs anything between -80 to +50 ish. Minus means going left, positive value means going
-right.
+Quick reference:
+- Flexion range is approximately -80 to +50 degrees.
+- Negative flexion moves left; positive flexion moves right.
+- The C++ visualizer consumes 3-column vectors:
+  hand_state,flexion,up_down
