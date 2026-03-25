@@ -5,6 +5,7 @@
 #include <cstring>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <iomanip>
 #include <sstream>
 #include <algorithm>
@@ -237,14 +238,17 @@ rd_kafka_t* create_consumer(const std::string& brokers, const std::string& group
 
     if (rd_kafka_conf_set(conf, "bootstrap.servers", brokers.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) {
         std::cerr << "[Config] " << errstr << std::endl;
+        rd_kafka_conf_destroy(conf);
         return nullptr;
     }
     if (rd_kafka_conf_set(conf, "group.id", group_id.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) {
         std::cerr << "[Config] " << errstr << std::endl;
+        rd_kafka_conf_destroy(conf);
         return nullptr;
     }
     if (rd_kafka_conf_set(conf, "auto.offset.reset", "latest", errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) {
         std::cerr << "[Config] " << errstr << std::endl;
+        rd_kafka_conf_destroy(conf);
         return nullptr;
     }
 
@@ -339,8 +343,12 @@ void write_burst_csv(
 void consume_and_process(rd_kafka_t* consumer) {
     rd_kafka_topic_partition_list_t *subscription = rd_kafka_topic_partition_list_new(1);
     rd_kafka_topic_partition_list_add(subscription, TOPIC_IN, RD_KAFKA_PARTITION_UA);
-    rd_kafka_subscribe(consumer, subscription);
+    const rd_kafka_resp_err_t subscribe_err = rd_kafka_subscribe(consumer, subscription);
     rd_kafka_topic_partition_list_destroy(subscription);
+    if (subscribe_err != RD_KAFKA_RESP_ERR_NO_ERROR) {
+        std::cerr << "[RawSink] Subscription failed: " << rd_kafka_err2str(subscribe_err) << std::endl;
+        return;
+    }
 
     const std::string output_dir = "data/verify";
     int next_session_number = get_next_session_number(output_dir);
@@ -422,11 +430,25 @@ void consume_and_process(rd_kafka_t* consumer) {
         // Extract Payload
         const uint8_t* payload_ptr = nullptr;
         size_t payload_size = 0;
+        const size_t header_size = sizeof(USFrameHeader);
 
         // Check for Raw A-Scan (Type 1)
         if (base_h->message_type == 1) { 
-            payload_ptr = reinterpret_cast<const uint8_t*>(rkmessage->payload) + sizeof(USFrameHeader);
-            payload_size = base_h->payload_length;
+            if (base_h->sample_format != 8) {
+                rd_kafka_message_destroy(rkmessage);
+                continue;
+            }
+            if (base_h->payload_length != base_h->num_samples) {
+                rd_kafka_message_destroy(rkmessage);
+                continue;
+            }
+            if (rkmessage->len < header_size + static_cast<size_t>(base_h->payload_length)) {
+                rd_kafka_message_destroy(rkmessage);
+                continue;
+            }
+
+            payload_ptr = reinterpret_cast<const uint8_t*>(rkmessage->payload) + header_size;
+            payload_size = static_cast<size_t>(base_h->payload_length);
         } else {
              // Ignore other types
              rd_kafka_message_destroy(rkmessage);

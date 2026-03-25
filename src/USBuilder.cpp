@@ -79,14 +79,52 @@ bool USBuilder::writeAll(const unsigned char* buf, size_t len) {
 bool USBuilder::readExact(unsigned char* buf, size_t len) {
     try {
         boost::system::error_code ec;
-        size_t bytesRead = boost::asio::read(*m_port, buffer(buf, len), ec);
-
+        m_port->non_blocking(true, ec);
         if (ec) {
-            std::cerr << "Read error: " << ec.message() << std::endl;
+            std::cerr << "Failed to set non-blocking mode: " << ec.message() << std::endl;
             return false;
         }
 
-        return bytesRead == len;
+        size_t totalRead = 0;
+        constexpr int kReadTimeoutMs = 2000;
+        const auto deadline = std::chrono::steady_clock::now() +
+                              std::chrono::milliseconds(kReadTimeoutMs);
+
+        while (totalRead < len) {
+            const size_t readNow = m_port->read_some(buffer(buf + totalRead, len - totalRead), ec);
+            if (!ec) {
+                totalRead += readNow;
+                continue;
+            }
+
+            if (ec == boost::asio::error::would_block ||
+                ec == boost::asio::error::try_again) {
+                if (std::chrono::steady_clock::now() >= deadline) {
+                    std::cerr << "Read timeout after " << kReadTimeoutMs
+                              << " ms (received " << totalRead << "/" << len << " bytes)" << std::endl;
+                    boost::system::error_code restoreEc;
+                    m_port->non_blocking(false, restoreEc);
+                    return false;
+                }
+                ec.clear();
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+
+            std::cerr << "Read error: " << ec.message() << std::endl;
+            boost::system::error_code restoreEc;
+            m_port->non_blocking(false, restoreEc);
+            return false;
+        }
+
+        boost::system::error_code restoreEc;
+        m_port->non_blocking(false, restoreEc);
+        if (restoreEc) {
+            std::cerr << "Failed to restore blocking mode: " << restoreEc.message() << std::endl;
+            return false;
+        }
+
+        return true;
 
     } catch (boost::system::system_error& e) {
         std::cerr << "Read error: " << e.what() << std::endl;

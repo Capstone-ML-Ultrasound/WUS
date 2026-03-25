@@ -53,6 +53,11 @@ services:
       CALIBRATION_MODE: ${CALIBRATION_MODE:-warmup_freeze}
       WARMUP_FRAMES: ${WARMUP_FRAMES:-50}
       FREEZE_AFTER: ${FREEZE_AFTER:-50}
+      LOG_EVERY: ${LOG_EVERY:-200}
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-1}
+      OPENBLAS_NUM_THREADS: ${OPENBLAS_NUM_THREADS:-1}
+      MKL_NUM_THREADS: ${MKL_NUM_THREADS:-1}
+      NUMEXPR_NUM_THREADS: ${NUMEXPR_NUM_THREADS:-1}
       CONSUMER_GROUP_ID: ${CONSUMER_GROUP_ID:-wrist_inference_group_live}
     restart: on-failure
     profiles:
@@ -74,6 +79,11 @@ services:
       CALIBRATION_MODE: ${CALIBRATION_MODE:-warmup_freeze}
       WARMUP_FRAMES: ${WARMUP_FRAMES:-50}
       FREEZE_AFTER: ${FREEZE_AFTER:-50}
+      LOG_EVERY: ${LOG_EVERY:-200}
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-1}
+      OPENBLAS_NUM_THREADS: ${OPENBLAS_NUM_THREADS:-1}
+      MKL_NUM_THREADS: ${MKL_NUM_THREADS:-1}
+      NUMEXPR_NUM_THREADS: ${NUMEXPR_NUM_THREADS:-1}
       CONSUMER_GROUP_ID: ${CONSUMER_GROUP_ID:-wrist_inference_group_replay_raw}
     restart: on-failure
     profiles:
@@ -92,7 +102,7 @@ services:
       TOPIC_IN: model_predictions
       CONSUMER_GROUP_ID: ${VISUALIZER_CONSUMER_GROUP_ID:-visualizer_group}
       VISUALIZER_GUI: ${VISUALIZER_GUI:-false}
-      VISUALIZER_LOG_EVERY: ${VISUALIZER_LOG_EVERY:-10}
+      VISUALIZER_LOG_EVERY: ${VISUALIZER_LOG_EVERY:-50}
     restart: on-failure
     profiles:
       - live

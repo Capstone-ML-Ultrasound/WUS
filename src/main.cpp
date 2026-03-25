@@ -2,7 +2,9 @@
 #include "Utils.h"
 #include "USFrameProtocol.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <iostream>
 #include <unistd.h>
 #include <signal.h> // For Ctrl+C handling
@@ -17,6 +19,61 @@ volatile sig_atomic_t running = 1;
 void signalHandler(int signum) {
   std::cout << "\n\nShutdown signal received..." << std::endl;
   running = 0;
+}
+
+bool isValidDepth(int depth) {
+  return depth > 0 && depth <= 4090;
+}
+
+bool isValidFreq(int freq) {
+  return freq == 160 || freq == 80 || freq == 40 || freq == 20;
+}
+
+bool isValidCompression(int compression) {
+  return compression >= 0 && compression <= 3;
+}
+
+bool isValidFilter(double filter_mhz) {
+  return filter_mhz == -1.0 || filter_mhz == 1.25 || filter_mhz == 2.5 ||
+         filter_mhz == 5.0 || filter_mhz == 10.0;
+}
+
+bool computeExpectedBytes(int depth, int compression, int& expectedBytes) {
+  if (!isValidCompression(compression)) {
+    std::cerr << "Invalid compression: " << compression << " (must be 0, 1, 2, or 3)" << std::endl;
+    return false;
+  }
+
+  const int divisor = compression + 1;
+  if (divisor <= 0) {
+    std::cerr << "Invalid compression divisor: " << divisor << std::endl;
+    return false;
+  }
+
+  if (depth % divisor != 0) {
+    std::cerr << "Invalid depth/compression combo: depth=" << depth
+              << " is not divisible by (compression+1)=" << divisor << std::endl;
+    return false;
+  }
+
+  expectedBytes = depth / divisor;
+  if (expectedBytes <= 0 || expectedBytes > 4096) {
+    std::cerr << "Computed expected bytes out of range: " << expectedBytes << std::endl;
+    return false;
+  }
+
+  return true;
+}
+
+int getNonNegativeEnvInt(const char* name, int fallback) {
+  const char* raw = std::getenv(name);
+  if (!raw || std::string(raw).empty()) return fallback;
+  try {
+    int value = std::stoi(raw);
+    return value < 0 ? fallback : value;
+  } catch (...) {
+    return fallback;
+  }
 }
 
 std::string getDefaultPort() {
@@ -92,33 +149,36 @@ void func4_set_burst(USBuilder &dev, Utils &utils) {
   }
 }
 
-void stream_continuous(USBuilder &dev, int depth, int freq, double filter_mhz, int compression, rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
+bool stream_continuous(USBuilder &dev, int depth, int freq, double filter_mhz, int compression, rd_kafka_t *rk, rd_kafka_topic_t *rkt) {
 
   // 1. Setup Hardware
 
-  // ************
-  int expectedBytes = depth / (compression + 1); //for the compression thing
+  int expectedBytes = 0;
+  if (!computeExpectedBytes(depth, compression, expectedBytes)) {
+    return false;
+  }
 
   // ONLY Can change filter IFF freq=80
   if (freq == 80) {
-      if (!dev.func14_setFilter(filter_mhz)){return;}
+      if (!dev.func14_setFilter(filter_mhz)){return false;}
   }
 
-  if (!dev.func24_setSamplingFreq(freq)){return;}
+  if (!dev.func24_setSamplingFreq(freq)){return false;}
 
   if (freq==80 && filter_mhz == -1) {
-      if (!dev.func3_setCompression(compression)){return;}
+      if (!dev.func3_setCompression(compression)){return false;}
   }
 
-  if (!dev.func4_setAutoSample(expectedBytes)) {return;}    ///****************** dpeth
+  if (!dev.func4_setAutoSample(expectedBytes)) {return false;}    ///****************** dpeth
 
 
   // 2. Setup for streaming
   int frameCount = 0;
   uint64_t sequence = 0; // Monotonic sequence counter
   uint32_t deviceId = 1; // Assuming device 1 for now
+  const int logEvery = std::max(1, getNonNegativeEnvInt("STREAM_LOG_EVERY", 100));
   auto overallStart = std::chrono::high_resolution_clock::now();
-  std::vector<unsigned char> samples(depth);
+  std::vector<unsigned char> samples(expectedBytes);
   // std::vector<unsigned char> samples;
   // samples.reserve(depth);
   //int expectedBytes = depth / (compression + 1); //for the compression thing
@@ -155,7 +215,7 @@ void stream_continuous(USBuilder &dev, int depth, int freq, double filter_mhz, i
     rd_kafka_poll(rk, 0);
 
     // 4. Calculate and display FPS
-    if (frameCount % 10 == 0) {
+    if (frameCount % logEvery == 0) {
         auto now = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> elapsed = now - overallStart;
         double fps = frameCount / elapsed.count();
@@ -173,6 +233,7 @@ void stream_continuous(USBuilder &dev, int depth, int freq, double filter_mhz, i
   // 6. Flush pending Kafka messages
   rd_kafka_flush(rk, 10 * 1000);
 
+  return true;
 }
 
 
@@ -182,8 +243,10 @@ void burst(USBuilder &dev, int depth, int freq, double filter_mhz, int compressi
   std::vector<std::vector<unsigned char>> burstData;
 
   // 1. Setup Hardware
-  // ************
-  int expectedBytes = depth / (compression + 1); //for the compression thing
+  int expectedBytes = 0;
+  if (!computeExpectedBytes(depth, compression, expectedBytes)) {
+    return;
+  }
 
   // ONLY Can change filter IFF freq=80
   if (freq == 80) {
@@ -200,7 +263,7 @@ void burst(USBuilder &dev, int depth, int freq, double filter_mhz, int compressi
   std::cout << "\n--- Acquiring burst "<< numFrames << " Samples ---" << std::endl;
 
 
-  if (dev.requestAscan8bitBurst(4000, 1000, burstData)) {
+  if (dev.requestAscan8bitBurst(expectedBytes, numFrames, burstData)) {
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double, std::milli> duration_ms = end - start;
 
@@ -268,6 +331,27 @@ int main(int argc, char* argv[]) {
       }
   }
 
+  if (!isValidDepth(depth)) {
+    std::cerr << "Invalid depth: " << depth << " (must be 1-4090)" << std::endl;
+    return 1;
+  }
+  if (!isValidFreq(freq)) {
+    std::cerr << "Invalid frequency: " << freq << " (must be 160, 80, 40, or 20 MHz)" << std::endl;
+    return 1;
+  }
+  if (!isValidFilter(filter_mhz)) {
+    std::cerr << "Invalid filter: " << filter_mhz << " (must be -1, 1.25, 2.5, 5, or 10 MHz)" << std::endl;
+    return 1;
+  }
+  if (!isValidCompression(compression)) {
+    std::cerr << "Invalid compression: " << compression << " (must be 0, 1, 2, or 3)" << std::endl;
+    return 1;
+  }
+  int expectedBytes = 0;
+  if (!computeExpectedBytes(depth, compression, expectedBytes)) {
+    return 1;
+  }
+
   // Set up Ctrl+C handler
   signal(SIGINT, signalHandler);
 
@@ -277,7 +361,8 @@ int main(int argc, char* argv[]) {
   std::cout << "Configuration: Depth=" << depth
             << ", Freq=" << freq
             << ", Filter=" << filter_mhz
-            << ", Comp=" << compression << "\n" << std::endl;
+            << ", Comp=" << compression
+            << ", ExpectedBytes=" << expectedBytes << "\n" << std::endl;
 
   // Instantiations
   USBuilder dev(portName);
@@ -345,7 +430,14 @@ int main(int argc, char* argv[]) {
     exit(1);
   }
 
-  stream_continuous(dev, depth, freq, filter_mhz, compression, rk, rkt);
+  if (!stream_continuous(dev, depth, freq, filter_mhz, compression, rk, rkt)) {
+    std::cerr << "Streaming setup failed." << std::endl;
+    dev.disconnect();
+    rd_kafka_flush(rk, 5000);
+    rd_kafka_topic_destroy(rkt);
+    rd_kafka_destroy(rk);
+    return 1;
+  }
 
   // Disconnect before exiting
   dev.disconnect();

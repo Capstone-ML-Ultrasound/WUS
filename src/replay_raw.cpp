@@ -245,11 +245,28 @@ bool copy_gcs_to_local(const std::string& uri, const std::string& local_path, co
 }
 
 bool parse_cell_to_u8(const std::string& token, uint8_t& value_out) {
+    const std::string trimmed = trim_copy(token);
+    if (trimmed.empty()) return false;
     try {
-        const int value = std::stoi(trim_copy(token));
-        if (value < 0) value_out = 0;
-        else if (value > 255) value_out = 255;
-        else value_out = static_cast<uint8_t>(value);
+        size_t consumed = 0;
+        const int value = std::stoi(trimmed, &consumed);
+        if (consumed != trimmed.size()) return false;
+        if (value < 0 || value > 255) return false;
+        value_out = static_cast<uint8_t>(value);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool parse_cell_to_i64(const std::string& token, int64_t& value_out) {
+    const std::string trimmed = trim_copy(token);
+    if (trimmed.empty()) return false;
+    try {
+        size_t consumed = 0;
+        const long long value = std::stoll(trimmed, &consumed);
+        if (consumed != trimmed.size()) return false;
+        value_out = static_cast<int64_t>(value);
         return true;
     } catch (...) {
         return false;
@@ -273,10 +290,35 @@ std::vector<std::vector<uint8_t>> read_csv_rows(const std::string& csv_path) {
         std::vector<uint8_t> row;
         std::stringstream ss(line);
         std::string token;
-        bool all_cells_valid = true;
+        std::vector<std::string> tokens;
         while (std::getline(ss, token, ',')) {
+            tokens.push_back(token);
+        }
+        if (tokens.empty()) continue;
+
+        // raw_sink CSV layout has timestamps in the first row; skip it.
+        if (line_no == 1) {
+            bool all_int64 = true;
+            bool any_out_of_u8_range = false;
+            for (const std::string& cell : tokens) {
+                int64_t parsed_i64 = 0;
+                if (!parse_cell_to_i64(cell, parsed_i64)) {
+                    all_int64 = false;
+                    break;
+                }
+                if (parsed_i64 < 0 || parsed_i64 > 255) {
+                    any_out_of_u8_range = true;
+                }
+            }
+            if (all_int64 && any_out_of_u8_range) {
+                continue;
+            }
+        }
+
+        bool all_cells_valid = true;
+        for (const std::string& cell : tokens) {
             uint8_t parsed = 0;
-            if (!parse_cell_to_u8(token, parsed)) {
+            if (!parse_cell_to_u8(cell, parsed)) {
                 all_cells_valid = false;
                 break;
             }
@@ -318,6 +360,7 @@ rd_kafka_t* create_producer(const std::string& brokers) {
 
     if (rd_kafka_conf_set(conf, "bootstrap.servers", brokers.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) {
         std::cerr << "[ReplayRaw] Producer config error: " << errstr << std::endl;
+        rd_kafka_conf_destroy(conf);
         return nullptr;
     }
 
