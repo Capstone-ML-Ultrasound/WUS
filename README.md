@@ -1,23 +1,20 @@
 # Wireless Ultrasound System (WUS)
 
-This project implements a streaming ultrasound pipeline over Kafka, including live ingestion, preprocessing, ML-style prediction publishing, archival sinks, and replay services.
+This project implements a streaming ultrasound pipeline over Kafka, including live ingestion, Python wrist-regression inference, archival sinks, and replay services.
 
 ## Architecture
 
 Core topics:
 - `ultrasound_raw_data`: live raw frames from hardware.
-- `ultrasound_clean`: preprocessed frames.
-- `model_predictions`: prediction messages from `output`.
+- `model_predictions`: prediction messages from `wrist_inference.py`.
+- `ultrasound_raw_data_replay`: replayed raw frames for offline validation.
 
 Main components:
 1. `us_acq` (host process): acquires from hardware and publishes raw frames.
-2. `preprocess`: consumes raw frames and publishes cleaned frames.
-3. `output`: consumes cleaned frames and publishes `model_predictions`.
-4. `prediction_consumer`: consumes and logs prediction events.
-5. `raw_sink`: consumes `ultrasound_raw_data`, writes burst CSVs, optionally uploads to GCS.
-6. `processed_sink`: consumes `ultrasound_clean`, writes burst CSVs, optionally uploads to GCS.
-7. `replay_raw`: reads archived raw CSVs from GCS and republishes to replay raw topic.
-8. `replay_processed`: reads archived processed CSVs from GCS and republishes to replay processed topic.
+2. `wrist-inference-*`: Python Kafka worker (`src/wrist_inference.py`) that consumes raw frames, calibrates/normalizes, extracts features, runs model inference, and publishes `model_predictions`.
+3. `visualizer`: Python consumer (`src/visualizer.py`) that consumes prediction events and applies UI-playground motion mapping. It runs headless in Docker by default; GUI mode is available on host with OpenCV.
+4. `raw_sink`: consumes `ultrasound_raw_data`, writes burst CSVs, optionally uploads to GCS.
+5. `replay_raw`: reads archived raw CSVs from GCS and republishes to replay raw topic.
 
 ## Docker Compose Profiles
 
@@ -25,11 +22,10 @@ Main components:
 
 | Profile | Services enabled |
 | --- | --- |
-| `live` | `preprocess-live`, `output-live`, `prediction_consumer` |
-| `testing` | `raw_sink`, `processed_sink` |
-| `data-gathering` | `preprocess-live`, `raw_sink`, `processed_sink` |
-| `replay-raw` | `replay_raw_service`, `preprocess-replay`, `output-live`, `prediction_consumer` |
-| `replay-preprocess` | `replay_processed_service`, `output-replay-preprocess`, `prediction_consumer` |
+| `live` | `wrist-inference-live`, `visualizer` |
+| `testing` | `raw_sink` |
+| `data-gathering` | `raw_sink` |
+| `replay-raw` | `replay_raw_service`, `wrist-inference-replay-raw`, `visualizer` |
 
 ## Docker Quick Start
 
@@ -39,17 +35,14 @@ Use one of these common launch patterns:
 # Live pipeline (no archival sinks)
 docker compose --profile live up --build
 
-# Live pipeline + raw/processed archival sinks
+# Live pipeline + raw archival sink
 docker compose --profile live --profile testing up --build
 
 # Data gathering without model inference or prediction consumption
 docker compose --profile data-gathering up --build
 
-# Replay archived raw data through preprocess + output
+# Replay archived raw data through wrist inference
 docker compose --profile replay-raw up --build
-
-# Replay archived processed data directly into output
-docker compose --profile replay-preprocess up --build
 ```
 
 To inspect exactly what will run for your selected profiles:
@@ -67,23 +60,24 @@ Raw archive sink (`raw_sink`):
 - `RAW_GCS_PREFIX` (default: `ultrasound/raw`)
 - `RAW_GCS_KEEP_LOCAL` (default: `false`)
 
-Processed archive sink (`processed_sink`):
-- `PROCESSED_GCS_BUCKET` (default: `processed-bucket-capstone`)
-- `PROCESSED_GCS_PREFIX` (default: `ultrasound/processed`)
-- `PROCESSED_GCS_KEEP_LOCAL` (default: `false`)
-- `PROCESSED_SINK_IDLE_FLUSH_MS` (default: `5000` in compose; set `0` to disable)
+Python wrist inference (`wrist-inference-live`, `wrist-inference-replay-raw`):
+- `MODEL_DIR` (default in compose: `/app/ml_infra/wrist_regressor/models/boosted_tree_regression_sessionnorm`)
+- `CALIBRATION_MODE` (`warmup_freeze` by default; optional: `fixed`, `continuous`)
+- `WARMUP_FRAMES` (default: `50`)
+- `FREEZE_AFTER` (default: `50`)
+- `FIXED_CALIBRATION_PATH` (optional `.npz` with `mean` and `std` arrays for `fixed` mode)
+
+Visualizer (`visualizer`):
+- `VISUALIZER_CONSUMER_GROUP_ID` (maps to container `CONSUMER_GROUP_ID`; default: `visualizer_group`)
+- `VISUALIZER_GUI` (default: `false`; set `true` to request OpenCV window mode)
+- `VISUALIZER_LOG_EVERY` (default: `10`)
+- `TOPIC_IN` (default: `model_predictions`)
 
 Replay raw (`replay_raw_service`):
 - `REPLAY_RAW_GCS_PREFIX` (default: `ultrasound/raw`)
 - `REPLAY_RAW_FILE_PATTERN` (optional filter)
 - `REPLAY_RAW_LOOP` (default: `false`)
 - `REPLAY_RAW_FRAME_INTERVAL_MS` (default: `20`)
-
-Replay processed (`replay_processed_service`):
-- `REPLAY_PROCESSED_GCS_PREFIX` (default: `ultrasound/processed`)
-- `REPLAY_PROCESSED_FILE_PATTERN` (optional filter)
-- `REPLAY_PROCESSED_LOOP` (default: `false`)
-- `REPLAY_PROCESSED_FRAME_INTERVAL_MS` (default: `20`)
 
 Shared cloud auth:
 - `GCP_PROJECT_ID`
@@ -110,10 +104,26 @@ Build individual binaries:
 
 ```bash
 make us_acq
-make preprocess
-make output
-make prediction_consumer
-make processed_sink
 make replay_raw
-make replay_processed
+make raw_sink
+```
+
+Run GUI visualizer on host (recommended easiest GUI path):
+
+```bash
+# In one terminal
+docker compose --profile live up --build
+
+# In another terminal (host)
+python -m pip install opencv-python confluent-kafka
+VISUALIZER_GUI=true BOOTSTRAP_SERVERS=localhost:9092 python src/visualizer.py
+```
+
+PowerShell equivalent:
+
+```powershell
+python -m pip install opencv-python confluent-kafka
+$env:VISUALIZER_GUI="true"
+$env:BOOTSTRAP_SERVERS="localhost:9092"
+python src/visualizer.py
 ```

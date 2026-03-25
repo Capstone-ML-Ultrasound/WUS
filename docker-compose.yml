@@ -33,15 +33,13 @@ services:
       - -lc
       - |
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic ultrasound_raw_data --partitions 1 --replication-factor 1
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic ultrasound_clean --partitions 1 --replication-factor 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic model_predictions --partitions 1 --replication-factor 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic ultrasound_raw_data_replay --partitions 1 --replication-factor 1
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic ultrasound_clean_replay --partitions 1 --replication-factor 1
     restart: "no"
 
-  preprocess-live:
+  wrist-inference-live:
     build: .
-    command: ./preprocess
+    command: python3 src/wrist_inference.py --mode kafka
     depends_on:
       kafka:
         condition: service_healthy
@@ -50,14 +48,19 @@ services:
     environment:
       BOOTSTRAP_SERVERS: kafka:29092
       TOPIC_IN: ultrasound_raw_data
+      TOPIC_OUT: model_predictions
+      MODEL_DIR: /app/ml_infra/wrist_regressor/models/boosted_tree_regression_sessionnorm
+      CALIBRATION_MODE: ${CALIBRATION_MODE:-warmup_freeze}
+      WARMUP_FRAMES: ${WARMUP_FRAMES:-50}
+      FREEZE_AFTER: ${FREEZE_AFTER:-50}
+      CONSUMER_GROUP_ID: ${CONSUMER_GROUP_ID:-wrist_inference_group_live}
     restart: on-failure
     profiles:
       - live
-      - data-gathering
 
-  preprocess-replay:
+  wrist-inference-replay-raw:
     build: .
-    command: ./preprocess
+    command: python3 src/wrist_inference.py --mode kafka
     depends_on:
       kafka:
         condition: service_healthy
@@ -66,13 +69,19 @@ services:
     environment:
       BOOTSTRAP_SERVERS: kafka:29092
       TOPIC_IN: ultrasound_raw_data_replay
+      TOPIC_OUT: model_predictions
+      MODEL_DIR: /app/ml_infra/wrist_regressor/models/boosted_tree_regression_sessionnorm
+      CALIBRATION_MODE: ${CALIBRATION_MODE:-warmup_freeze}
+      WARMUP_FRAMES: ${WARMUP_FRAMES:-50}
+      FREEZE_AFTER: ${FREEZE_AFTER:-50}
+      CONSUMER_GROUP_ID: ${CONSUMER_GROUP_ID:-wrist_inference_group_replay_raw}
     restart: on-failure
     profiles:
       - replay-raw
 
-  output-live:
+  visualizer:
     build: .
-    command: ./output
+    command: python3 src/visualizer.py
     depends_on:
       kafka:
         condition: service_healthy
@@ -80,42 +89,14 @@ services:
         condition: service_completed_successfully
     environment:
       BOOTSTRAP_SERVERS: kafka:29092
-      TOPIC_IN: ultrasound_clean
+      TOPIC_IN: model_predictions
+      CONSUMER_GROUP_ID: ${VISUALIZER_CONSUMER_GROUP_ID:-visualizer_group}
+      VISUALIZER_GUI: ${VISUALIZER_GUI:-false}
+      VISUALIZER_LOG_EVERY: ${VISUALIZER_LOG_EVERY:-10}
     restart: on-failure
     profiles:
       - live
       - replay-raw
-
-  output-replay-preprocess:
-    build: .
-    command: ./output
-    depends_on:
-      kafka:
-        condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
-    environment:
-      BOOTSTRAP_SERVERS: kafka:29092
-      TOPIC_IN: ultrasound_clean_replay
-    restart: on-failure
-    profiles:
-      - replay-preprocess
-
-  prediction_consumer:
-    build: .
-    command: ./prediction_consumer
-    depends_on:
-      kafka:
-        condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
-    environment:
-      BOOTSTRAP_SERVERS: kafka:29092
-    restart: on-failure
-    profiles:
-      - live
-      - replay-raw
-      - replay-preprocess
 
   raw_sink:
     build: .
@@ -130,31 +111,6 @@ services:
       RAW_GCS_BUCKET: ${RAW_GCS_BUCKET:-raw-capstone-bucket}
       RAW_GCS_PREFIX: ${RAW_GCS_PREFIX:-ultrasound/raw}
       RAW_GCS_KEEP_LOCAL: ${RAW_GCS_KEEP_LOCAL:-false}
-      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
-      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
-    volumes:
-      - ./data:/app/data
-      - ./secrets:/app/secrets:ro
-      - ${APPDATA}/gcloud:/root/.config/gcloud:ro
-    restart: on-failure
-    profiles:
-      - testing
-      - data-gathering
-
-  processed_sink:
-    build: .
-    command: ./processed_sink
-    depends_on:
-      kafka:
-        condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
-    environment:
-      BOOTSTRAP_SERVERS: kafka:29092
-      PROCESSED_GCS_BUCKET: ${PROCESSED_GCS_BUCKET:-processed-bucket-capstone}
-      PROCESSED_GCS_PREFIX: ${PROCESSED_GCS_PREFIX:-ultrasound/processed}
-      PROCESSED_GCS_KEEP_LOCAL: ${PROCESSED_GCS_KEEP_LOCAL:-false}
-      PROCESSED_SINK_IDLE_FLUSH_MS: ${PROCESSED_SINK_IDLE_FLUSH_MS:-5000}
       GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
     volumes:
@@ -191,29 +147,3 @@ services:
     restart: on-failure
     profiles:
       - replay-raw
-
-  replay_processed_service:
-    build: .
-    command: ./replay_processed
-    depends_on:
-      kafka:
-        condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
-    environment:
-      BOOTSTRAP_SERVERS: kafka:29092
-      REPLAY_GCS_BUCKET: ${PROCESSED_GCS_BUCKET:-processed-bucket-capstone}
-      REPLAY_GCS_PREFIX: ${REPLAY_PROCESSED_GCS_PREFIX:-ultrasound/processed}
-      REPLAY_FILE_PATTERN: ${REPLAY_PROCESSED_FILE_PATTERN:-}
-      REPLAY_LOOP: ${REPLAY_PROCESSED_LOOP:-false}
-      REPLAY_FRAME_INTERVAL_MS: ${REPLAY_PROCESSED_FRAME_INTERVAL_MS:-20}
-      REPLAY_TOPIC_OUT: ultrasound_clean_replay
-      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
-      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
-    volumes:
-      - ./data:/app/data
-      - ./secrets:/app/secrets:ro
-      - ${APPDATA}/gcloud:/root/.config/gcloud:ro
-    restart: on-failure
-    profiles:
-      - replay-preprocess
