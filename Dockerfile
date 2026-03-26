@@ -56,7 +56,7 @@ COPY --from=builder /app/us_acq .
 COPY --from=builder /app/raw_sink .
 COPY --from=builder /app/replay_raw .
 COPY --from=builder /app/src /app/src
-COPY --from=builder /app/ml_infra /app/ml_infra
+COPY --from=builder /app/inference /app/inference
 
 # Create data directory for CSV output
 RUN mkdir -p data

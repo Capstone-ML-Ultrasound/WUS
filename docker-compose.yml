@@ -51,7 +51,7 @@ services:
       BOOTSTRAP_SERVERS: kafka:29092
       TOPIC_IN: ultrasound_raw_data
       TOPIC_OUT: wrist_predictions
-      MODEL_DIR: /app/ml_infra/wrist_regressor/models/boosted_tree_regression_sessionnorm
+      MODEL_DIR: /app/inference/models/boosted_tree_regression_sessionnorm
       CALIBRATION_MODE: ${CALIBRATION_MODE:-warmup_freeze}
       WARMUP_FRAMES: ${WARMUP_FRAMES:-50}
       FREEZE_AFTER: ${FREEZE_AFTER:-50}
@@ -78,7 +78,7 @@ services:
       BOOTSTRAP_SERVERS: kafka:29092
       TOPIC_IN: ultrasound_raw_data_replay
       TOPIC_OUT: wrist_predictions
-      MODEL_DIR: /app/ml_infra/wrist_regressor/models/boosted_tree_regression_sessionnorm
+      MODEL_DIR: /app/inference/models/boosted_tree_regression_sessionnorm
       CALIBRATION_MODE: ${CALIBRATION_MODE:-warmup_freeze}
       WARMUP_FRAMES: ${WARMUP_FRAMES:-50}
       FREEZE_AFTER: ${FREEZE_AFTER:-50}
@@ -105,8 +105,7 @@ services:
       BOOTSTRAP_SERVERS: kafka:29092
       TOPIC_IN: ultrasound_raw_data
       TOPIC_OUT: hand_state_predictions
-      MODEL_JSON_PATH: /app/ml_infra/binary_classifier/tree_serialization/xgb_binary_open_close_hand_model.json
-      MODEL_LIB_PATH: /app/ml_infra/binary_classifier/inference/xgb_binary_open_close_hand_model.so
+      MODEL_BUNDLE_PATH: /app/inference/models/binary_classifier/binary_open_close_pipeline.joblib
       INPUT_DIM: ${BINARY_INPUT_DIM:-200}
       NORMALIZE_FRAME: ${BINARY_NORMALIZE_FRAME:-false}
       THRESHOLD: ${HAND_STATE_THRESHOLD:-0.5}
@@ -129,8 +128,7 @@ services:
       BOOTSTRAP_SERVERS: kafka:29092
       TOPIC_IN: ultrasound_raw_data_replay
       TOPIC_OUT: hand_state_predictions
-      MODEL_JSON_PATH: /app/ml_infra/binary_classifier/tree_serialization/xgb_binary_open_close_hand_model.json
-      MODEL_LIB_PATH: /app/ml_infra/binary_classifier/inference/xgb_binary_open_close_hand_model.so
+      MODEL_BUNDLE_PATH: /app/inference/models/binary_classifier/binary_open_close_pipeline.joblib
       INPUT_DIM: ${BINARY_INPUT_DIM:-200}
       NORMALIZE_FRAME: ${BINARY_NORMALIZE_FRAME:-false}
       THRESHOLD: ${HAND_STATE_THRESHOLD:-0.5}

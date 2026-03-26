@@ -768,7 +768,7 @@ class LiveKafkaInferenceWorker:
 
 def _default_model_dir() -> Path:
     repo_root = Path(__file__).resolve().parent.parent
-    return repo_root / "ml_infra" / "wrist_regressor" / "models" / "boosted_tree_regression_sessionnorm"
+    return repo_root / "inference" / "models" / "boosted_tree_regression_sessionnorm"
 
 
 def _env_or_default(name: str, default: str) -> str:

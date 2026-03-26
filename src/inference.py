@@ -7,7 +7,7 @@ import struct
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 
@@ -27,6 +27,11 @@ try:
     import tl2cgen
 except ImportError:  # pragma: no cover
     tl2cgen = None
+
+try:
+    import joblib
+except ImportError:  # pragma: no cover
+    joblib = None
 
 
 US_MAGIC = b"US"
@@ -108,9 +113,9 @@ def _default_model_json_path() -> Path:
     repo_root = Path(__file__).resolve().parent.parent
     return (
         repo_root
-        / "ml_infra"
+        / "inference"
+        / "models"
         / "binary_classifier"
-        / "tree_serialization"
         / "xgb_binary_open_close_hand_model.json"
     )
 
@@ -125,10 +130,21 @@ def _default_model_lib_path() -> Path:
         ext = ".dylib"
     return (
         repo_root
-        / "ml_infra"
-        / "binary_classifier"
         / "inference"
+        / "models"
+        / "binary_classifier"
         / f"xgb_binary_open_close_hand_model{ext}"
+    )
+
+
+def _default_model_bundle_path() -> Path:
+    repo_root = Path(__file__).resolve().parent.parent
+    return (
+        repo_root
+        / "inference"
+        / "models"
+        / "binary_classifier"
+        / "binary_open_close_pipeline.joblib"
     )
 
 
@@ -169,21 +185,108 @@ def _to_optional_float(value) -> Optional[float]:
         return None
 
 
+class OnlineBinaryFeaturePipeline:
+    def __init__(self, scaler, pca, cfg: Dict[str, Any]):
+        self.scaler = scaler
+        self.pca = pca
+
+        self.crop_first = int(cfg.get("crop_first", 100))
+        self.crop_last = int(cfg.get("crop_last", 100))
+        self.unstable_remove = int(cfg.get("unstable_remove", 20))
+        self.win = int(cfg.get("win", 10))
+        self.step = int(cfg.get("step", 5))
+        self.b_thresh = float(cfg.get("b_thresh", cfg.get("b", 3.0)))
+
+        sigma = float(cfg.get("gauss_sigma", 2.0))
+        self.kernel = self._gaussian_kernel1d(sigma).astype(np.float32)
+        self.pad = len(self.kernel) // 2
+
+        self.depth_slice = None
+        self.starts = None
+        self.feature_dim = None
+
+    def init_for_depth(self, raw_depth: int) -> None:
+        left = self.crop_first + self.unstable_remove
+        right = int(raw_depth) - self.crop_last - self.unstable_remove
+        if right <= left:
+            raise ValueError("Cropping removes all depth bins.")
+
+        depth_final = right - left
+        if depth_final < self.win:
+            raise ValueError("Final depth smaller than sliding window.")
+
+        self.depth_slice = slice(left, right)
+        self.starts = np.arange(0, depth_final - self.win + 1, self.step, dtype=np.int32)
+        self.feature_dim = len(self.starts) * 3
+
+    @staticmethod
+    def _gaussian_kernel1d(sigma: float, radius: Optional[int] = None) -> np.ndarray:
+        sigma = float(sigma)
+        if sigma <= 0:
+            raise ValueError("sigma must be > 0")
+        if radius is None:
+            radius = int(np.ceil(3 * sigma))
+        x = np.arange(-radius, radius + 1, dtype=np.float32)
+        k = np.exp(-(x * x) / (2.0 * sigma * sigma)).astype(np.float32)
+        k /= (k.sum() + 1e-12)
+        return k
+
+    @staticmethod
+    def _sigmoid(x: np.ndarray) -> np.ndarray:
+        return 1.0 / (1.0 + np.exp(-x))
+
+    def transform(self, frame: np.ndarray) -> np.ndarray:
+        x = np.asarray(frame, dtype=np.float32).reshape(-1)
+        if self.depth_slice is None or self.starts is None:
+            self.init_for_depth(x.size)
+
+        assert self.depth_slice is not None
+        assert self.starts is not None
+        assert self.feature_dim is not None
+
+        x = x[self.depth_slice]
+        xpad = np.pad(x, (self.pad, self.pad), mode="reflect")
+        x = np.convolve(xpad, self.kernel, mode="valid").astype(np.float32)
+
+        feats = np.empty(self.feature_dim, dtype=np.float32)
+        j = 0
+        for s in self.starts:
+            w = x[s:s + self.win]
+            m = w.mean(dtype=np.float32)
+            v = ((w - m) ** 2).mean(dtype=np.float32)
+            energy = np.sqrt((w * w).sum(dtype=np.float32), dtype=np.float32)
+            es = self._sigmoid(energy - self.b_thresh)
+            feats[j] = m
+            feats[j + 1] = v
+            feats[j + 2] = es
+            j += 3
+
+        feats = self.scaler.transform(feats.reshape(1, -1)).astype(np.float32)
+        if self.pca is not None:
+            feats = self.pca.transform(feats).astype(np.float32)
+        return feats
+
+
 class BinaryInferenceEngine:
     def __init__(
         self,
         model_json_path: Optional[str],
         model_lib_path: Optional[str],
+        model_bundle_path: Optional[str],
         input_dim: int,
         normalize_frame: bool = False,
     ):
         self.model_json_path = Path(model_json_path).expanduser() if model_json_path else None
         self.model_lib_path = Path(model_lib_path).expanduser() if model_lib_path else None
+        self.model_bundle_path = Path(model_bundle_path).expanduser() if model_bundle_path else None
         self.input_dim = max(1, int(input_dim))
         self.normalize_frame = bool(normalize_frame)
 
         self._backend = None
         self._backend_name = ""
+        self._bundle_model = None
+        self._bundle_pipeline = None
+        self._bundle_closed_class = 0
         self._load_backend()
 
     @property
@@ -211,10 +314,47 @@ class BinaryInferenceEngine:
             self._backend_name = "tl2cgen_lib"
             return
 
+        if self.model_bundle_path is not None and self.model_bundle_path.exists():
+            if joblib is None:
+                raise ImportError(
+                    "joblib is required for pipeline-bundle inference. Install with: pip install joblib"
+                )
+            bundle = joblib.load(self.model_bundle_path)
+            if not isinstance(bundle, dict):
+                raise ValueError(
+                    "MODEL_BUNDLE_PATH must point to a joblib dict bundle with keys: "
+                    "'model', 'scaler', 'pca', and 'preprocess_config'."
+                )
+            model = bundle.get("model")
+            scaler = bundle.get("scaler")
+            pca = bundle.get("pca")
+            cfg = bundle.get("preprocess_config")
+            if model is None or scaler is None or cfg is None:
+                raise ValueError(
+                    "Invalid model bundle. Expected keys: 'model', 'scaler', and 'preprocess_config'."
+                )
+            self._bundle_model = model
+            self._bundle_pipeline = OnlineBinaryFeaturePipeline(scaler=scaler, pca=pca, cfg=cfg)
+            class_mapping = bundle.get("class_mapping", {0: "closed", 1: "open"})
+            self._bundle_closed_class = self._resolve_closed_class(class_mapping)
+            self._backend = bundle
+            self._backend_name = "joblib_bundle"
+            return
+
         raise FileNotFoundError(
             "No binary-classifier model artifact found. "
-            f"Checked model_json_path={self.model_json_path} and model_lib_path={self.model_lib_path}"
+            "Checked model_json_path="
+            f"{self.model_json_path}, model_lib_path={self.model_lib_path}, "
+            f"and model_bundle_path={self.model_bundle_path}"
         )
+
+    @staticmethod
+    def _resolve_closed_class(class_mapping: Any) -> Any:
+        if isinstance(class_mapping, dict):
+            for key, value in class_mapping.items():
+                if str(value).strip().lower() == "closed":
+                    return key
+        return 0
 
     def _frame_to_features(self, frame: np.ndarray) -> np.ndarray:
         x = np.asarray(frame, dtype=np.float32).reshape(-1)
@@ -242,6 +382,24 @@ class BinaryInferenceEngine:
             preds = self._backend.predict(xgb.DMatrix(features))
         elif self._backend_name == "tl2cgen_lib":
             preds = self._backend.predict(tl2cgen.DMatrix(features))
+        elif self._backend_name == "joblib_bundle":
+            assert self._bundle_model is not None and self._bundle_pipeline is not None
+            bundle_features = self._bundle_pipeline.transform(frame)
+            probs = np.asarray(self._bundle_model.predict_proba(bundle_features), dtype=np.float32).reshape(-1)
+            classes = np.asarray(getattr(self._bundle_model, "classes_", []))
+            if classes.size == probs.size and classes.size > 0:
+                target = str(self._bundle_closed_class)
+                idx = None
+                for i, cls in enumerate(classes):
+                    if str(cls) == target:
+                        idx = i
+                        break
+                if idx is None:
+                    idx = 0
+                return float(probs[idx])
+            idx = int(self._bundle_closed_class) if str(self._bundle_closed_class).isdigit() else 0
+            idx = min(max(idx, 0), max(0, probs.size - 1))
+            return float(probs[idx])
         else:
             raise RuntimeError("Inference backend is not initialized.")
 
@@ -258,6 +416,7 @@ class LiveKafkaBinaryInferenceWorker:
         auto_offset_reset: str = "latest",
         model_json_path: Optional[str] = None,
         model_lib_path: Optional[str] = None,
+        model_bundle_path: Optional[str] = None,
         input_dim: int = 200,
         normalize_frame: bool = False,
         threshold: float = 0.5,
@@ -283,6 +442,7 @@ class LiveKafkaBinaryInferenceWorker:
         self.engine = BinaryInferenceEngine(
             model_json_path=model_json_path,
             model_lib_path=model_lib_path,
+            model_bundle_path=model_bundle_path,
             input_dim=input_dim,
             normalize_frame=normalize_frame,
         )
@@ -433,6 +593,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--model-lib-path",
         default=_env_or_default("MODEL_LIB_PATH", str(_default_model_lib_path())),
     )
+    parser.add_argument(
+        "--model-bundle-path",
+        default=_env_or_default("MODEL_BUNDLE_PATH", str(_default_model_bundle_path())),
+        help="Path to sklearn/joblib binary bundle (preferred when JSON/SO artifacts are unavailable).",
+    )
     parser.add_argument("--input-dim", type=int, default=_env_int("INPUT_DIM", 200))
     parser.add_argument(
         "--normalize-frame",
@@ -461,6 +626,7 @@ def main() -> None:
         auto_offset_reset=args.auto_offset_reset,
         model_json_path=args.model_json_path,
         model_lib_path=args.model_lib_path,
+        model_bundle_path=args.model_bundle_path,
         input_dim=args.input_dim,
         normalize_frame=args.normalize_frame,
         threshold=args.threshold,

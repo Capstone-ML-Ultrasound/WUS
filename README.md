@@ -65,7 +65,7 @@ Raw archive sink (`raw_sink`):
 - `RAW_GCS_KEEP_LOCAL` (default: `false`)
 
 Python wrist inference (`wrist-inference-live`, `wrist-inference-replay-raw`):
-- `MODEL_DIR` (default in compose: `/app/ml_infra/wrist_regressor/models/boosted_tree_regression_sessionnorm`)
+- `MODEL_DIR` (default in compose: `/app/inference/models/boosted_tree_regression_sessionnorm`)
 - `CALIBRATION_MODE` (`warmup_freeze` by default; optional: `fixed`, `continuous`)
 - `WARMUP_FRAMES` (default: `50`)
 - `FREEZE_AFTER` (default: `50`)
@@ -73,8 +73,8 @@ Python wrist inference (`wrist-inference-live`, `wrist-inference-replay-raw`):
 - `TOPIC_OUT` (compose default: `wrist_predictions`)
 
 Binary hand-state inference (`binary-inference-live`, `binary-inference-replay-raw`):
-- `MODEL_JSON_PATH` (default in compose: `/app/ml_infra/binary_classifier/tree_serialization/xgb_binary_open_close_hand_model.json`)
-- `MODEL_LIB_PATH` (optional TL2cgen shared library path; JSON backend is preferred in compose)
+- `MODEL_BUNDLE_PATH` (default in compose: `/app/inference/models/binary_classifier/binary_open_close_pipeline.joblib`)
+- `MODEL_JSON_PATH` / `MODEL_LIB_PATH` (optional legacy XGBoost JSON / TL2Cgen shared library paths)
 - `INPUT_DIM` (default: `200`)
 - `NORMALIZE_FRAME` (default: `false`)
 - `HAND_STATE_THRESHOLD` (default: `0.5`)
