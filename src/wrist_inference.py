@@ -573,6 +573,7 @@ class LiveKafkaInferenceWorker:
         fixed_calibration_path: Optional[str] = None,
         poll_timeout_s: float = 0.5,
         log_every: int = 100,
+        prediction_log_every: int = 0,
     ):
         if Consumer is None or Producer is None:
             raise ImportError(
@@ -591,6 +592,7 @@ class LiveKafkaInferenceWorker:
         self.fixed_calibration_path = fixed_calibration_path
         self.poll_timeout_s = float(poll_timeout_s)
         self.log_every = max(1, int(log_every))
+        self.prediction_log_every = max(0, int(prediction_log_every))
 
         self.pipeline = None
         self.model = None
@@ -659,6 +661,26 @@ class LiveKafkaInferenceWorker:
             except BufferError:
                 producer.poll(0.05)
 
+    def _log_prediction(self, frame: RawFrameEnvelope, pred: Optional[float], infer_ms: Optional[float]):
+        next_frame_idx = self.total_frames + 1
+        if (
+            self.prediction_log_every <= 0
+            or pred is None
+            or self.calibration is None
+            or next_frame_idx % self.prediction_log_every != 0
+        ):
+            return
+        infer_str = "None" if infer_ms is None else f"{infer_ms:.3f}"
+        print(
+            "[WristInference][Prediction] "
+            f"seq={frame.sequence_number} "
+            f"pred={pred:.6f} "
+            f"infer_ms={infer_str} "
+            f"calib_n={self.calibration.calibration_n} "
+            f"frozen={self.calibration.is_frozen}",
+            flush=True,
+        )
+
     def run(self):
         consumer = Consumer(
             {
@@ -672,6 +694,8 @@ class LiveKafkaInferenceWorker:
         consumer.subscribe([self.topic_in])
         print(f"[WristInference] Subscribed to {self.topic_in}")
         print(f"[WristInference] Publishing predictions to {self.topic_out}")
+        if self.prediction_log_every > 0:
+            print(f"[WristInference] Prediction logging enabled: every {self.prediction_log_every} frame(s)")
 
         try:
             while self.running:
@@ -718,6 +742,7 @@ class LiveKafkaInferenceWorker:
 
                 payload = self._build_prediction_payload(envelope, pred, infer_ms)
                 self._produce_prediction(producer, payload)
+                self._log_prediction(envelope, pred, infer_ms)
 
                 self.total_frames += 1
                 if self.total_frames % self.log_every == 0:
@@ -808,6 +833,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--poll-timeout-s", type=float, default=_env_float("POLL_TIMEOUT_S", 0.5))
     parser.add_argument("--log-every", type=int, default=_env_int("LOG_EVERY", 100))
+    parser.add_argument(
+        "--prediction-log-every",
+        type=int,
+        default=_env_int("PREDICTION_LOG_EVERY", 0),
+        help="Emit per-prediction logs every N frames (0 disables).",
+    )
     return parser
 
 
@@ -841,6 +872,7 @@ def main():
         fixed_calibration_path=fixed_calibration_path,
         poll_timeout_s=args.poll_timeout_s,
         log_every=args.log_every,
+        prediction_log_every=args.prediction_log_every,
     )
 
     def _signal_handler(signum, _frame):

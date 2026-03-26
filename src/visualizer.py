@@ -2,6 +2,7 @@ import json
 import os
 import signal
 import sys
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -14,7 +15,7 @@ except ImportError as exc:  # pragma: no cover
 
 
 TOPIC_IN_DEFAULT = "model_predictions"
-GROUP_ID_DEFAULT = "visualizer_group"
+GROUP_ID_DEFAULT = "visualizer_group_local"
 
 FLEXION_MIN = -80.0
 FLEXION_MAX = 50.0
@@ -33,6 +34,12 @@ class ModelPrediction:
     flexion: float
     up_down: float
     ready: bool
+    source_ts_ns: Optional[int] = None
+    prediction_ts_ns: Optional[int] = None
+
+
+def log(message: str) -> None:
+    print(message, flush=True)
 
 
 def _env_or_default(name: str, default: str) -> str:
@@ -59,7 +66,7 @@ def _env_bool(name: str, default: bool) -> bool:
 
 def _signal_handler(signum, _frame):
     global running
-    print(f"[Visualizer] Shutdown signal {signum} received...")
+    log(f"[Visualizer] Shutdown signal {signum} received...")
     running = False
 
 
@@ -77,6 +84,30 @@ def flexion_to_speed(deg: float) -> float:
         norm = d / FLEXION_MAX
     norm = max(-1.0, min(norm, 1.0))
     return norm * MAX_SPEED
+
+
+def _to_optional_int(value) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _latency_ms(newer_ns: Optional[int], older_ns: Optional[int]) -> Optional[float]:
+    if newer_ns is None or older_ns is None:
+        return None
+    delta = int(newer_ns) - int(older_ns)
+    if delta < 0:
+        return None
+    return float(delta) / 1_000_000.0
+
+
+def _fmt_ms(value: Optional[float]) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.1f}"
 
 
 def decode_prediction(payload: bytes) -> Optional[ModelPrediction]:
@@ -112,6 +143,8 @@ def decode_prediction(payload: bytes) -> Optional[ModelPrediction]:
         flexion=flexion_value,
         up_down=up_down,
         ready=ready,
+        source_ts_ns=_to_optional_int(obj.get("source_ts_ns")),
+        prediction_ts_ns=_to_optional_int(obj.get("prediction_ts_ns")),
     )
 
 
@@ -132,7 +165,15 @@ class GuiRenderer:
 
         cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
 
-    def render(self, pred: ModelPrediction, smoothed_dx: float, frame_idx: int) -> bool:
+    def render(
+        self,
+        pred: ModelPrediction,
+        smoothed_dx: float,
+        frame_idx: int,
+        e2e_ms: Optional[float],
+        model_ms: Optional[float],
+        post_model_ms: Optional[float],
+    ) -> bool:
         cv2 = self.cv2
 
         prev_x, prev_y = self.pos_x, self.pos_y
@@ -208,6 +249,21 @@ class GuiRenderer:
             1,
         )
 
+        latency_info = (
+            f"LAT e2e={_fmt_ms(e2e_ms)}ms "
+            f"model={_fmt_ms(model_ms)}ms "
+            f"gui={_fmt_ms(post_model_ms)}ms"
+        )
+        cv2.putText(
+            display,
+            latency_info,
+            (20, 84),
+            cv2.FONT_HERSHEY_PLAIN,
+            0.95,
+            (120, 240, 120),
+            1,
+        )
+
         cv2.imshow(WINDOW_NAME, display)
         key = cv2.waitKey(1) & 0xFF
         return key not in (27, ord("q"), ord("Q"))
@@ -235,23 +291,23 @@ def main():
     )
     consumer.subscribe([topic_in])
 
-    print(f"[Visualizer] Subscribed to {topic_in}")
+    log(f"[Visualizer] Subscribed to {topic_in} (group={group_id})")
 
     gui = None
     if request_gui:
         try:
             gui = GuiRenderer()
-            print("[Visualizer] GUI mode enabled.")
+            log("[Visualizer] GUI mode enabled.")
         except Exception as exc:
-            print(
+            log(
                 "[Visualizer] GUI requested but unavailable. "
                 "Install opencv-python and run on a desktop session."
             )
-            print(f"[Visualizer] GUI init error: {exc}")
+            log(f"[Visualizer] GUI init error: {exc}")
             gui = None
 
     if gui is None:
-        print("[Visualizer] Headless mode enabled.")
+        log("[Visualizer] Headless mode enabled.")
 
     seen = 0
     parse_failures = 0
@@ -266,7 +322,7 @@ def main():
             if msg.error():
                 if msg.error().code() == KafkaError._PARTITION_EOF:
                     continue
-                print(f"[Visualizer] Consumer error: {msg.error()}")
+                log(f"[Visualizer] Consumer error: {msg.error()}")
                 continue
 
             pred = decode_prediction(msg.value())
@@ -274,28 +330,35 @@ def main():
                 parse_failures += 1
                 if parse_failures % 25 == 1:
                     preview = msg.value()[:200]
-                    print(f"[Visualizer] Could not parse payload: {preview!r}")
+                    log(f"[Visualizer] Could not parse payload: {preview!r}")
                 continue
 
             seen += 1
             raw_dx = flexion_to_speed(pred.flexion)
             smoothed_dx = (SMOOTHING_ALPHA * smoothed_dx) + ((1.0 - SMOOTHING_ALPHA) * raw_dx)
+            now_ns = time.time_ns()
+            e2e_ms = _latency_ms(now_ns, pred.source_ts_ns)
+            model_ms = _latency_ms(pred.prediction_ts_ns, pred.source_ts_ns)
+            post_model_ms = _latency_ms(now_ns, pred.prediction_ts_ns)
 
             if gui is not None:
-                if not gui.render(pred, smoothed_dx, seen):
+                if not gui.render(pred, smoothed_dx, seen, e2e_ms, model_ms, post_model_ms):
                     break
             elif seen % log_every == 0:
-                print(
+                log(
                     "[Visualizer] "
                     f"frame={seen} ready={int(pred.ready)} "
                     f"vec=[{pred.hand_state:.1f},{pred.flexion:.1f},{pred.up_down:.1f}] "
-                    f"raw_dx={raw_dx:.2f} smooth_dx={smoothed_dx:.2f}"
+                    f"raw_dx={raw_dx:.2f} smooth_dx={smoothed_dx:.2f} "
+                    f"lat_e2e_ms={_fmt_ms(e2e_ms)} "
+                    f"lat_model_ms={_fmt_ms(model_ms)} "
+                    f"lat_gui_ms={_fmt_ms(post_model_ms)}"
                 )
     finally:
         consumer.close()
         if gui is not None:
             gui.close()
-        print("[Visualizer] Done.")
+        log("[Visualizer] Done.")
 
 
 if __name__ == "__main__":

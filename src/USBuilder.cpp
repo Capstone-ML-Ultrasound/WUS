@@ -9,6 +9,10 @@
 #include <thread>
 #include <boost/asio.hpp>
 #include <boost/asio/serial_port.hpp>
+#ifndef _WIN32
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 using namespace boost::asio;
 
@@ -78,12 +82,29 @@ bool USBuilder::writeAll(const unsigned char* buf, size_t len) {
  */
 bool USBuilder::readExact(unsigned char* buf, size_t len) {
     try {
+#ifdef _WIN32
+        // Windows fallback: keep blocking read behavior when non-blocking fd control
+        // is unavailable through this build of Boost.Asio.
         boost::system::error_code ec;
-        m_port->non_blocking(true, ec);
+        size_t bytesRead = boost::asio::read(*m_port, buffer(buf, len), ec);
         if (ec) {
-            std::cerr << "Failed to set non-blocking mode: " << ec.message() << std::endl;
+            std::cerr << "Read error: " << ec.message() << std::endl;
             return false;
         }
+        return bytesRead == len;
+#else
+        const int fd = m_port->native_handle();
+        const int originalFlags = fcntl(fd, F_GETFL, 0);
+        if (originalFlags == -1) {
+            std::cerr << "Failed to get serial port flags" << std::endl;
+            return false;
+        }
+        if (fcntl(fd, F_SETFL, originalFlags | O_NONBLOCK) == -1) {
+            std::cerr << "Failed to set serial port to non-blocking mode" << std::endl;
+            return false;
+        }
+
+        boost::system::error_code ec;
 
         size_t totalRead = 0;
         constexpr int kReadTimeoutMs = 2000;
@@ -102,8 +123,7 @@ bool USBuilder::readExact(unsigned char* buf, size_t len) {
                 if (std::chrono::steady_clock::now() >= deadline) {
                     std::cerr << "Read timeout after " << kReadTimeoutMs
                               << " ms (received " << totalRead << "/" << len << " bytes)" << std::endl;
-                    boost::system::error_code restoreEc;
-                    m_port->non_blocking(false, restoreEc);
+                    fcntl(fd, F_SETFL, originalFlags);
                     return false;
                 }
                 ec.clear();
@@ -112,19 +132,17 @@ bool USBuilder::readExact(unsigned char* buf, size_t len) {
             }
 
             std::cerr << "Read error: " << ec.message() << std::endl;
-            boost::system::error_code restoreEc;
-            m_port->non_blocking(false, restoreEc);
+            fcntl(fd, F_SETFL, originalFlags);
             return false;
         }
 
-        boost::system::error_code restoreEc;
-        m_port->non_blocking(false, restoreEc);
-        if (restoreEc) {
-            std::cerr << "Failed to restore blocking mode: " << restoreEc.message() << std::endl;
+        if (fcntl(fd, F_SETFL, originalFlags) == -1) {
+            std::cerr << "Failed to restore serial port flags" << std::endl;
             return false;
         }
 
         return true;
+#endif
 
     } catch (boost::system::system_error& e) {
         std::cerr << "Read error: " << e.what() << std::endl;

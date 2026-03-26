@@ -68,14 +68,15 @@ Python wrist inference (`wrist-inference-live`, `wrist-inference-replay-raw`):
 - `FIXED_CALIBRATION_PATH` (optional `.npz` with `mean` and `std` arrays for `fixed` mode)
 
 Visualizer (`visualizer`):
-- `VISUALIZER_CONSUMER_GROUP_ID` (maps to container `CONSUMER_GROUP_ID`; default: `visualizer_group`)
+- `VISUALIZER_CONSUMER_GROUP_ID` (maps to container `CONSUMER_GROUP_ID`; default: `visualizer_group_docker`)
 - `VISUALIZER_GUI` (default: `false`; set `true` to request OpenCV window mode)
-- `VISUALIZER_LOG_EVERY` (default: `10`)
+- `VISUALIZER_LOG_EVERY` (default: `50`)
 - `TOPIC_IN` (default: `model_predictions`)
 
 Visualizer connection defaults:
 - `BOOTSTRAP_SERVERS` default is `localhost:9092` for host runs.
 - In Docker Compose, visualizer uses `BOOTSTRAP_SERVERS=kafka:29092`.
+- Host `src/visualizer.py` default group id is `visualizer_group_local` to avoid clashing with Docker's default consumer group.
 
 Replay raw (`replay_raw_service`):
 - `REPLAY_RAW_GCS_PREFIX` (default: `ultrasound/raw`)
