@@ -6,15 +6,19 @@ This project implements a streaming ultrasound pipeline over Kafka, including li
 
 Core topics:
 - `ultrasound_raw_data`: live raw frames from hardware.
-- `model_predictions`: prediction messages from `wrist_inference.py`.
+- `wrist_predictions`: regression output from `src/wrist_inference.py`.
+- `hand_state_predictions`: binary open/close output from `src/inference.py`.
+- `model_predictions`: fused vector output from `src/prediction_fusion.py` for the visualizer.
 - `ultrasound_raw_data_replay`: replayed raw frames for offline validation.
 
 Main components:
 1. `us_acq` (host process): acquires from hardware and publishes raw frames.
-2. `wrist-inference-*`: Python Kafka worker (`src/wrist_inference.py`) that consumes raw frames, calibrates/normalizes, extracts features, runs model inference, and publishes `model_predictions`.
-3. `visualizer`: Python consumer (`src/visualizer.py`) that consumes `model_predictions` and renders an Etch-a-Sketch-style cursor. It runs headless in Docker by default; GUI mode is available on host with OpenCV.
-4. `raw_sink`: consumes `ultrasound_raw_data`, writes burst CSVs, optionally uploads to GCS.
-5. `replay_raw`: reads archived raw CSVs from GCS and republishes to replay raw topic.
+2. `wrist-inference-*`: Python Kafka worker (`src/wrist_inference.py`) that consumes raw frames and publishes `wrist_predictions` (flexion/regression).
+3. `binary-inference-*`: Python Kafka worker (`src/inference.py`) that consumes raw frames and publishes `hand_state_predictions` (open/close probability and state).
+4. `prediction-fusion`: Python Kafka worker (`src/prediction_fusion.py`) that synchronizes wrist + hand predictions by `source_sequence` and publishes fused `model_predictions`.
+5. `visualizer`: Python consumer (`src/visualizer.py`) that consumes `model_predictions` and renders an Etch-a-Sketch-style cursor. It runs headless in Docker by default; GUI mode is available on host with OpenCV.
+6. `raw_sink`: consumes `ultrasound_raw_data`, writes burst CSVs, optionally uploads to GCS.
+7. `replay_raw`: reads archived raw CSVs from GCS and republishes to replay raw topic.
 
 ## Docker Compose Profiles
 
@@ -22,10 +26,10 @@ Main components:
 
 | Profile | Services enabled |
 | --- | --- |
-| `live` | `wrist-inference-live`, `visualizer` |
+| `live` | `wrist-inference-live`, `binary-inference-live`, `prediction-fusion`, `visualizer` |
 | `testing` | `raw_sink` |
 | `data-gathering` | `raw_sink` |
-| `replay-raw` | `replay_raw_service`, `wrist-inference-replay-raw`, `visualizer` |
+| `replay-raw` | `replay_raw_service`, `wrist-inference-replay-raw`, `binary-inference-replay-raw`, `prediction-fusion`, `visualizer` |
 
 ## Docker Quick Start
 
@@ -66,6 +70,21 @@ Python wrist inference (`wrist-inference-live`, `wrist-inference-replay-raw`):
 - `WARMUP_FRAMES` (default: `50`)
 - `FREEZE_AFTER` (default: `50`)
 - `FIXED_CALIBRATION_PATH` (optional `.npz` with `mean` and `std` arrays for `fixed` mode)
+- `TOPIC_OUT` (compose default: `wrist_predictions`)
+
+Binary hand-state inference (`binary-inference-live`, `binary-inference-replay-raw`):
+- `MODEL_JSON_PATH` (default in compose: `/app/ml_infra/binary_classifier/tree_serialization/xgb_binary_open_close_hand_model.json`)
+- `MODEL_LIB_PATH` (optional TL2cgen shared library path; JSON backend is preferred in compose)
+- `INPUT_DIM` (default: `200`)
+- `NORMALIZE_FRAME` (default: `false`)
+- `HAND_STATE_THRESHOLD` (default: `0.5`)
+- `TOPIC_OUT` (compose default: `hand_state_predictions`)
+
+Prediction fusion (`prediction-fusion`):
+- `WRIST_TOPIC_IN` (default: `wrist_predictions`)
+- `HAND_TOPIC_IN` (default: `hand_state_predictions`)
+- `TOPIC_OUT` (default: `model_predictions`)
+- `FUSION_MAX_SYNC_LAG_MS` (default: `1000`)
 
 Visualizer (`visualizer`):
 - `VISUALIZER_CONSUMER_GROUP_ID` (maps to container `CONSUMER_GROUP_ID`; default: `visualizer_group_docker`)
@@ -136,8 +155,8 @@ python src/visualizer.py
 Always run live GUI visualizer on host (PowerShell):
 
 ```powershell
-# Terminal 1: run Kafka + topic init + inference (without docker visualizer)
-docker compose up --build kafka kafka-init wrist-inference-live
+# Terminal 1: run Kafka + topic init + inference + fusion (without docker visualizer)
+docker compose up --build kafka kafka-init wrist-inference-live binary-inference-live prediction-fusion
 
 # Terminal 2: run host visualizer in GUI mode
 $env:VISUALIZER_GUI="true"
@@ -149,8 +168,8 @@ python src/visualizer.py
 ## Visualizer Details
 
 `src/visualizer.py` accepts prediction payloads in either of these forms:
-- Pipeline payload from `wrist_inference.py`: includes `prediction` and `ready` (plus metadata).
-- Optional vector payload: `hand_state`, `flexion`, `up_down`.
+- Fused payload from `src/prediction_fusion.py` (recommended): includes `hand_state`, `flexion`, `up_down`, `ready`, and latency metadata.
+- Optional direct payloads with `prediction`/`ready` or `hand_state`/`flexion`/`up_down`.
 
 Mapping and behavior:
 - `flexion` drives horizontal velocity after clamping to `[-80, +50]` degrees.

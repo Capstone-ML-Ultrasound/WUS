@@ -564,7 +564,7 @@ class LiveKafkaInferenceWorker:
         model_dir: str,
         bootstrap_servers: str,
         topic_in: str = "ultrasound_raw_data",
-        topic_out: str = "model_predictions",
+        topic_out: str = "wrist_predictions",
         consumer_group_id: str = "wrist_inference_group",
         auto_offset_reset: str = "latest",
         calibration_mode: str = "warmup_freeze",
@@ -821,7 +821,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=_env_or_default("BOOTSTRAP_SERVERS", "localhost:9092"),
     )
     parser.add_argument("--topic-in", default=_env_or_default("TOPIC_IN", "ultrasound_raw_data"))
-    parser.add_argument("--topic-out", default=_env_or_default("TOPIC_OUT", "model_predictions"))
+    parser.add_argument("--topic-out", default=_env_or_default("TOPIC_OUT", "wrist_predictions"))
     parser.add_argument(
         "--consumer-group-id",
         default=_env_or_default("CONSUMER_GROUP_ID", "wrist_inference_group"),
