@@ -185,6 +185,17 @@ def _to_optional_float(value) -> Optional[float]:
         return None
 
 
+ANSI_RESET = "\033[0m"
+ANSI_GREEN = "\033[32m"
+ANSI_RED = "\033[31m"
+
+
+def _format_hand_state_colored(hand_state: int) -> str:
+    if int(hand_state) > 0:
+        return f"{ANSI_RED}closed{ANSI_RESET}"
+    return f"{ANSI_GREEN}open{ANSI_RESET}"
+
+
 class OnlineBinaryFeaturePipeline:
     def __init__(self, scaler, pca, cfg: Dict[str, Any]):
         self.scaler = scaler
@@ -275,12 +286,15 @@ class BinaryInferenceEngine:
         model_bundle_path: Optional[str],
         input_dim: int,
         normalize_frame: bool = False,
+        backend_preference: str = "bundle_first",
     ):
         self.model_json_path = Path(model_json_path).expanduser() if model_json_path else None
         self.model_lib_path = Path(model_lib_path).expanduser() if model_lib_path else None
         self.model_bundle_path = Path(model_bundle_path).expanduser() if model_bundle_path else None
         self.input_dim = max(1, int(input_dim))
         self.normalize_frame = bool(normalize_frame)
+        pref = str(backend_preference).strip().lower()
+        self.backend_preference = pref if pref in {"bundle_first", "legacy_first"} else "bundle_first"
 
         self._backend = None
         self._backend_name = ""
@@ -294,52 +308,58 @@ class BinaryInferenceEngine:
         return self._backend_name
 
     def _load_backend(self) -> None:
-        if self.model_json_path is not None and self.model_json_path.exists():
-            if xgb is None:
-                raise ImportError(
-                    "xgboost is required for JSON model inference. Install with: pip install xgboost"
-                )
-            booster = xgb.Booster()
-            booster.load_model(str(self.model_json_path))
-            self._backend = booster
-            self._backend_name = "xgboost_json"
-            return
+        if self.backend_preference == "legacy_first":
+            load_order = ("json", "lib", "bundle")
+        else:
+            load_order = ("bundle", "json", "lib")
 
-        if self.model_lib_path is not None and self.model_lib_path.exists():
-            if tl2cgen is None:
-                raise ImportError(
-                    "tl2cgen is required for shared-library inference. Install with: pip install tl2cgen"
-                )
-            self._backend = tl2cgen.Predictor(str(self.model_lib_path), nthread=1)
-            self._backend_name = "tl2cgen_lib"
-            return
+        for backend in load_order:
+            if backend == "json" and self.model_json_path is not None and self.model_json_path.exists():
+                if xgb is None:
+                    raise ImportError(
+                        "xgboost is required for JSON model inference. Install with: pip install xgboost"
+                    )
+                booster = xgb.Booster()
+                booster.load_model(str(self.model_json_path))
+                self._backend = booster
+                self._backend_name = "xgboost_json"
+                return
 
-        if self.model_bundle_path is not None and self.model_bundle_path.exists():
-            if joblib is None:
-                raise ImportError(
-                    "joblib is required for pipeline-bundle inference. Install with: pip install joblib"
-                )
-            bundle = joblib.load(self.model_bundle_path)
-            if not isinstance(bundle, dict):
-                raise ValueError(
-                    "MODEL_BUNDLE_PATH must point to a joblib dict bundle with keys: "
-                    "'model', 'scaler', 'pca', and 'preprocess_config'."
-                )
-            model = bundle.get("model")
-            scaler = bundle.get("scaler")
-            pca = bundle.get("pca")
-            cfg = bundle.get("preprocess_config")
-            if model is None or scaler is None or cfg is None:
-                raise ValueError(
-                    "Invalid model bundle. Expected keys: 'model', 'scaler', and 'preprocess_config'."
-                )
-            self._bundle_model = model
-            self._bundle_pipeline = OnlineBinaryFeaturePipeline(scaler=scaler, pca=pca, cfg=cfg)
-            class_mapping = bundle.get("class_mapping", {0: "closed", 1: "open"})
-            self._bundle_closed_class = self._resolve_closed_class(class_mapping)
-            self._backend = bundle
-            self._backend_name = "joblib_bundle"
-            return
+            if backend == "lib" and self.model_lib_path is not None and self.model_lib_path.exists():
+                if tl2cgen is None:
+                    raise ImportError(
+                        "tl2cgen is required for shared-library inference. Install with: pip install tl2cgen"
+                    )
+                self._backend = tl2cgen.Predictor(str(self.model_lib_path), nthread=1)
+                self._backend_name = "tl2cgen_lib"
+                return
+
+            if backend == "bundle" and self.model_bundle_path is not None and self.model_bundle_path.exists():
+                if joblib is None:
+                    raise ImportError(
+                        "joblib is required for pipeline-bundle inference. Install with: pip install joblib"
+                    )
+                bundle = joblib.load(self.model_bundle_path)
+                if not isinstance(bundle, dict):
+                    raise ValueError(
+                        "MODEL_BUNDLE_PATH must point to a joblib dict bundle with keys: "
+                        "'model', 'scaler', 'pca', and 'preprocess_config'."
+                    )
+                model = bundle.get("model")
+                scaler = bundle.get("scaler")
+                pca = bundle.get("pca")
+                cfg = bundle.get("preprocess_config")
+                if model is None or scaler is None or cfg is None:
+                    raise ValueError(
+                        "Invalid model bundle. Expected keys: 'model', 'scaler', and 'preprocess_config'."
+                    )
+                self._bundle_model = model
+                self._bundle_pipeline = OnlineBinaryFeaturePipeline(scaler=scaler, pca=pca, cfg=cfg)
+                class_mapping = bundle.get("class_mapping", {0: "closed", 1: "open"})
+                self._bundle_closed_class = self._resolve_closed_class(class_mapping)
+                self._backend = bundle
+                self._backend_name = "joblib_bundle"
+                return
 
         raise FileNotFoundError(
             "No binary-classifier model artifact found. "
@@ -420,9 +440,11 @@ class LiveKafkaBinaryInferenceWorker:
         input_dim: int = 200,
         normalize_frame: bool = False,
         threshold: float = 0.5,
+        probability_positive_class: str = "closed",
+        backend_preference: str = "bundle_first",
         poll_timeout_s: float = 0.5,
         log_every: int = 100,
-        prediction_log_every: int = 0,
+        prediction_log_every: int = 50,
     ):
         if Consumer is None or Producer is None:
             raise ImportError(
@@ -435,6 +457,8 @@ class LiveKafkaBinaryInferenceWorker:
         self.consumer_group_id = str(consumer_group_id)
         self.auto_offset_reset = str(auto_offset_reset)
         self.threshold = float(threshold)
+        cls = str(probability_positive_class).strip().lower()
+        self.probability_positive_class = cls if cls in {"closed", "open"} else "closed"
         self.poll_timeout_s = float(poll_timeout_s)
         self.log_every = max(1, int(log_every))
         self.prediction_log_every = max(0, int(prediction_log_every))
@@ -445,6 +469,7 @@ class LiveKafkaBinaryInferenceWorker:
             model_bundle_path=model_bundle_path,
             input_dim=input_dim,
             normalize_frame=normalize_frame,
+            backend_preference=backend_preference,
         )
 
         self.running = True
@@ -457,20 +482,28 @@ class LiveKafkaBinaryInferenceWorker:
     def _build_prediction_payload(
         self,
         frame: RawFrameEnvelope,
-        probability: float,
+        model_probability: float,
         infer_ms: float,
     ) -> bytes:
+        model_probability = max(0.0, min(1.0, float(model_probability)))
+        closed_probability = (
+            model_probability
+            if self.probability_positive_class == "closed"
+            else (1.0 - model_probability)
+        )
         prediction_ts_ns = int(time.time_ns())
-        hand_state = 1.0 if probability >= self.threshold else 0.0
-        confidence = max(0.0, min(1.0, 2.0 * abs(probability - 0.5)))
+        hand_state = 1.0 if closed_probability >= self.threshold else 0.0
+        confidence = max(0.0, min(1.0, 2.0 * abs(closed_probability - 0.5)))
         payload = {
             "source_sequence": int(frame.sequence_number),
             "source_ts_ns": int(frame.timestamp_ns),
             "prediction_ts_ns": prediction_ts_ns,
             "label": "hand_closed" if hand_state > 0.5 else "hand_open",
             "confidence": float(confidence),
-            "prediction": float(probability),
-            "binary_probability": float(probability),
+            "prediction": float(closed_probability),
+            "binary_probability": float(closed_probability),
+            "model_probability_raw": float(model_probability),
+            "probability_positive_class": self.probability_positive_class,
             "hand_state": float(hand_state),
             "ready": True,
             "infer_time_ms": float(infer_ms),
@@ -503,8 +536,20 @@ class LiveKafkaBinaryInferenceWorker:
         print(f"[BinaryInference] Subscribed to {self.topic_in}", flush=True)
         print(f"[BinaryInference] Publishing predictions to {self.topic_out}", flush=True)
         print(f"[BinaryInference] Backend: {self.engine.backend_name}", flush=True)
+        print(f"[BinaryInference] Backend preference: {self.engine.backend_preference}", flush=True)
         print(f"[BinaryInference] Normalize frame: {int(self.engine.normalize_frame)}", flush=True)
         print(f"[BinaryInference] Threshold: {self.threshold:.3f}", flush=True)
+        print(
+            "[BinaryInference] Probability positive class: "
+            f"{self.probability_positive_class}",
+            flush=True,
+        )
+        if self.engine.backend_name != "joblib_bundle":
+            print(
+                "[BinaryInference][Warn] Using legacy backend without bundle preprocessing. "
+                "If model was trained with scaler/PCA feature pipeline, predictions may degrade.",
+                flush=True,
+            )
         if self.prediction_log_every > 0:
             print(
                 "[BinaryInference] Prediction logging enabled: "
@@ -528,9 +573,9 @@ class LiveKafkaBinaryInferenceWorker:
                 try:
                     envelope = decode_raw_frame_envelope(msg.value())
                     t0 = time.perf_counter()
-                    probability = self.engine.predict_probability(envelope.samples)
+                    model_probability = self.engine.predict_probability(envelope.samples)
                     infer_ms = (time.perf_counter() - t0) * 1000.0
-                    payload = self._build_prediction_payload(envelope, probability, infer_ms)
+                    payload = self._build_prediction_payload(envelope, model_probability, infer_ms)
                     self._produce_prediction(producer, payload)
                 except Exception as exc:
                     self.total_errors += 1
@@ -540,20 +585,28 @@ class LiveKafkaBinaryInferenceWorker:
 
                 self.total_frames += 1
                 if self.prediction_log_every > 0 and self.total_frames % self.prediction_log_every == 0:
-                    hand_state = 1 if probability >= self.threshold else 0
-                    print(
+                    closed_probability = (
+                        model_probability
+                        if self.probability_positive_class == "closed"
+                        else (1.0 - model_probability)
+                    )
+                    hand_state = 1 if closed_probability >= self.threshold else 0
+                    state_text = "closed" if hand_state > 0 else "open"
+                    line_color = ANSI_RED if hand_state > 0 else ANSI_GREEN
+                    line = (
                         "[BinaryInference][Prediction] "
                         f"seq={envelope.sequence_number} "
-                        f"prob={probability:.6f} "
-                        f"hand_state={hand_state} "
-                        f"infer_ms={infer_ms:.3f}",
-                        flush=True,
+                        f"closed_prob={closed_probability:.6f} "
+                        f"raw_prob={model_probability:.6f} "
+                        f"hand_state={hand_state}({state_text}) "
+                        f"infer_ms={infer_ms:.3f}"
                     )
+                    print(f"{line_color}{line}{ANSI_RESET}", flush=True)
                 elif self.total_frames % self.log_every == 0:
                     print(
                         "[BinaryInference] "
                         f"frames={self.total_frames} "
-                        f"last_prob={probability:.6f} "
+                        f"last_raw_prob={model_probability:.6f} "
                         f"errors={self.total_errors}",
                         flush=True,
                     )
@@ -598,6 +651,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=_env_or_default("MODEL_BUNDLE_PATH", str(_default_model_bundle_path())),
         help="Path to sklearn/joblib binary bundle (preferred when JSON/SO artifacts are unavailable).",
     )
+    parser.add_argument(
+        "--backend-preference",
+        choices=["bundle_first", "legacy_first"],
+        default=_env_or_default("BACKEND_PREFERENCE", "bundle_first"),
+        help="Backend load order. 'bundle_first' avoids preprocessing mismatch when bundle exists.",
+    )
     parser.add_argument("--input-dim", type=int, default=_env_int("INPUT_DIM", 200))
     parser.add_argument(
         "--normalize-frame",
@@ -605,12 +664,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=_env_bool("NORMALIZE_FRAME", False),
     )
     parser.add_argument("--threshold", type=float, default=_env_float("THRESHOLD", 0.5))
+    parser.add_argument(
+        "--probability-positive-class",
+        choices=["closed", "open"],
+        default=_env_or_default("PROBABILITY_POSITIVE_CLASS", "closed"),
+        help="Interpretation of model output probability before thresholding hand_state.",
+    )
     parser.add_argument("--poll-timeout-s", type=float, default=_env_float("POLL_TIMEOUT_S", 0.5))
     parser.add_argument("--log-every", type=int, default=_env_int("LOG_EVERY", 100))
     parser.add_argument(
         "--prediction-log-every",
         type=int,
-        default=_env_int("PREDICTION_LOG_EVERY", 0),
+        default=_env_int("PREDICTION_LOG_EVERY", 50),
         help="Emit per-prediction logs every N frames (0 disables).",
     )
     return parser
@@ -627,9 +692,11 @@ def main() -> None:
         model_json_path=args.model_json_path,
         model_lib_path=args.model_lib_path,
         model_bundle_path=args.model_bundle_path,
+        backend_preference=args.backend_preference,
         input_dim=args.input_dim,
         normalize_frame=args.normalize_frame,
         threshold=args.threshold,
+        probability_positive_class=args.probability_positive_class,
         poll_timeout_s=args.poll_timeout_s,
         log_every=args.log_every,
         prediction_log_every=args.prediction_log_every,
