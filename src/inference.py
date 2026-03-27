@@ -537,6 +537,8 @@ class LiveKafkaBinaryInferenceWorker:
 
         print(f"[BinaryInference] Subscribed to {self.topic_in}", flush=True)
         print(f"[BinaryInference] Publishing predictions to {self.topic_out}", flush=True)
+        print(f"[BinaryInference] Consumer group: {self.consumer_group_id}", flush=True)
+        print(f"[BinaryInference] Auto offset reset: {self.auto_offset_reset}", flush=True)
         print(f"[BinaryInference] Backend: {self.engine.backend_name}", flush=True)
         print(f"[BinaryInference] Backend preference: {self.engine.backend_preference}", flush=True)
         print(f"[BinaryInference] Normalize frame: {int(self.engine.normalize_frame)}", flush=True)

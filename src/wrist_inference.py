@@ -692,6 +692,8 @@ class LiveKafkaInferenceWorker:
         consumer.subscribe([self.topic_in])
         print(f"[WristInference] Subscribed to {self.topic_in}")
         print(f"[WristInference] Publishing predictions to {self.topic_out}")
+        print(f"[WristInference] Consumer group: {self.consumer_group_id}")
+        print(f"[WristInference] Auto offset reset: {self.auto_offset_reset}")
         if self.prediction_log_every > 0:
             print(f"[WristInference] Prediction logging enabled: every {self.prediction_log_every} frame(s)")
 
@@ -716,31 +718,37 @@ class LiveKafkaInferenceWorker:
                     continue
 
                 frame = envelope.samples
-                if self.raw_depth is None:
-                    self._init_model_for_depth(frame.shape[0])
-                elif frame.shape[0] != self.raw_depth:
+                try:
+                    if self.raw_depth is None:
+                        self._init_model_for_depth(frame.shape[0])
+                    elif frame.shape[0] != self.raw_depth:
+                        self.total_errors += 1
+                        print(
+                            "[WristInference] Depth changed unexpectedly. "
+                            f"expected={self.raw_depth} got={frame.shape[0]} (dropping frame)"
+                        )
+                        continue
+
+                    assert self.pipeline is not None and self.model is not None and self.calibration is not None
+                    self.calibration.update(frame)
+
+                    pred = None
+                    infer_ms = None
+                    if self.calibration.ready():
+                        mean, std = self.calibration.get_mean_std()
+                        self.pipeline.set_calibration(mean, std)
+                        t0 = time.perf_counter()
+                        pred = self.pipeline.predict_frame(frame, self.model)
+                        infer_ms = (time.perf_counter() - t0) * 1000.0
+
+                    payload = self._build_prediction_payload(envelope, pred, infer_ms)
+                    self._produce_prediction(producer, payload)
+                    self._log_prediction(envelope, pred, infer_ms)
+                except Exception as exc:
                     self.total_errors += 1
-                    print(
-                        "[WristInference] Depth changed unexpectedly. "
-                        f"expected={self.raw_depth} got={frame.shape[0]} (dropping frame)"
-                    )
+                    if self.total_errors % 25 == 1:
+                        print(f"[WristInference] Dropping frame due to inference error: {exc}")
                     continue
-
-                assert self.pipeline is not None and self.model is not None and self.calibration is not None
-                self.calibration.update(frame)
-
-                pred = None
-                infer_ms = None
-                if self.calibration.ready():
-                    mean, std = self.calibration.get_mean_std()
-                    self.pipeline.set_calibration(mean, std)
-                    t0 = time.perf_counter()
-                    pred = self.pipeline.predict_frame(frame, self.model)
-                    infer_ms = (time.perf_counter() - t0) * 1000.0
-
-                payload = self._build_prediction_payload(envelope, pred, infer_ms)
-                self._produce_prediction(producer, payload)
-                self._log_prediction(envelope, pred, infer_ms)
 
                 self.total_frames += 1
                 if self.total_frames % self.log_every == 0:
