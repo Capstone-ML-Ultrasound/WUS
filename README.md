@@ -27,6 +27,7 @@ Main components:
 | Profile | Services enabled |
 | --- | --- |
 | `live` | `wrist-inference-live`, `binary-inference-live`, `prediction-fusion`, `visualizer` |
+| `live-hand-state` | `wrist-inference-live`, `binary-inference-live`, `prediction-fusion`, `hand-state-visualizer` |
 | `testing` | `raw_sink` |
 | `data-gathering` | `raw_sink` |
 | `replay-raw` | `replay_raw_service`, `wrist-inference-replay-raw`, `binary-inference-replay-raw`, `prediction-fusion`, `visualizer` |
@@ -38,6 +39,11 @@ Use one of these common launch patterns:
 ```bash
 # Live pipeline (no archival sinks)
 docker compose --profile live up --build
+
+# Live pipeline with hand-state-only visualizer input from src/inference.py
+docker compose --profile live-hand-state up --build
+python -m pip install opencv-python confluent-kafka
+HAND_STATE_VISUALIZER_GUI=true BOOTSTRAP_SERVERS=localhost:9092 python src/hand_state_visualizer.py
 
 # Live pipeline + raw archival sink
 docker compose --profile live --profile testing up --build
@@ -92,6 +98,13 @@ Visualizer (`visualizer`):
 - `VISUALIZER_LOG_EVERY` (default: `50`)
 - `TOPIC_IN` (default: `model_predictions`)
 
+Hand-state visualizer (`hand-state-visualizer`):
+- `HAND_STATE_VISUALIZER_CONSUMER_GROUP_ID` (maps to container `CONSUMER_GROUP_ID`; default: `hand_state_visualizer_group_docker`)
+- `HAND_STATE_VISUALIZER_GUI` (default: `true`; falls back to headless if OpenCV GUI is unavailable)
+- `HAND_STATE_VISUALIZER_LOG_EVERY` (default: `50`)
+- `HAND_STATE_VISUALIZER_FULLSCREEN` (default: `true`)
+- `TOPIC_IN` (default: `hand_state_predictions`)
+
 Visualizer connection defaults:
 - `BOOTSTRAP_SERVERS` default is `localhost:9092` for host runs.
 - In Docker Compose, visualizer uses `BOOTSTRAP_SERVERS=kafka:29092`.
@@ -102,6 +115,10 @@ Replay raw (`replay_raw_service`):
 - `REPLAY_RAW_FILE_PATTERN` (optional filter)
 - `REPLAY_RAW_LOOP` (default: `false`)
 - `REPLAY_RAW_FRAME_INTERVAL_MS` (default: `20`)
+
+PowerShell tip for replay auth:
+- Set `GCLOUD_CONFIG_DIR` to your host gcloud profile before `docker compose up`:
+  `$env:GCLOUD_CONFIG_DIR="$env:APPDATA\gcloud"`
 
 Shared cloud auth:
 - `GCP_PROJECT_ID`
@@ -173,6 +190,34 @@ $env:VISUALIZER_GUI="true"
 $env:BOOTSTRAP_SERVERS="localhost:9092"
 $env:CONSUMER_GROUP_ID="visualizer_gui_host"
 python src/visualizer.py
+```
+
+Always run live GUI visualizer on host (macOS/Linux):
+
+```bash
+# Terminal 1: run Kafka + topic init + inference + fusion (without docker visualizer)
+docker compose up --build kafka kafka-init wrist-inference-live binary-inference-live prediction-fusion
+
+# Terminal 2: run host visualizer in GUI mode
+python3 -m pip install opencv-python confluent-kafka
+export VISUALIZER_GUI=true
+export BOOTSTRAP_SERVERS=localhost:9092
+export CONSUMER_GROUP_ID=visualizer_gui_host
+python3 src/visualizer.py
+```
+
+Always run hand-state GUI visualizer on host (macOS/Linux):
+
+```bash
+# Terminal 1: run Kafka + topic init + inference + fusion (without docker visualizer)
+docker compose up --build kafka kafka-init wrist-inference-live binary-inference-live prediction-fusion
+
+# Terminal 2: run host hand-state visualizer in GUI mode
+python3 -m pip install opencv-python confluent-kafka
+export HAND_STATE_VISUALIZER_GUI=true
+export BOOTSTRAP_SERVERS=localhost:9092
+export CONSUMER_GROUP_ID=hand_state_visualizer_gui_host
+python3 src/hand_state_visualizer.py
 ```
 
 ## Visualizer Details

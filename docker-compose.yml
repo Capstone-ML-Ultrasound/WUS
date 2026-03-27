@@ -65,6 +65,7 @@ services:
     restart: on-failure
     profiles:
       - live
+      - live-hand-state
 
   wrist-inference-replay-raw:
     build: .
@@ -115,6 +116,7 @@ services:
     restart: on-failure
     profiles:
       - live
+      - live-hand-state
 
   binary-inference-replay-raw:
     build: .
@@ -158,6 +160,7 @@ services:
     restart: on-failure
     profiles:
       - live
+      - live-hand-state
       - replay-raw
 
   visualizer:
@@ -179,6 +182,25 @@ services:
       - live
       - replay-raw
 
+  hand-state-visualizer:
+    build: .
+    command: python3 src/hand_state_visualizer.py
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      TOPIC_IN: hand_state_predictions
+      CONSUMER_GROUP_ID: ${HAND_STATE_VISUALIZER_CONSUMER_GROUP_ID:-hand_state_visualizer_group_docker}
+      HAND_STATE_VISUALIZER_GUI: ${HAND_STATE_VISUALIZER_GUI:-true}
+      HAND_STATE_VISUALIZER_LOG_EVERY: ${HAND_STATE_VISUALIZER_LOG_EVERY:-50}
+      HAND_STATE_VISUALIZER_FULLSCREEN: ${HAND_STATE_VISUALIZER_FULLSCREEN:-true}
+    restart: on-failure
+    profiles:
+      - live-hand-state
+
   raw_sink:
     build: .
     command: ./raw_sink
@@ -197,7 +219,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./secrets:/app/secrets:ro
-      - ${GCLOUD_CONFIG_DIR:-./secrets/gcloud}:/root/.config/gcloud:ro
+      - ${GCLOUD_CONFIG_DIR:-./secrets/gcloud}:/root/.config/gcloud
     restart: on-failure
     profiles:
       - testing
@@ -224,7 +246,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./secrets:/app/secrets:ro
-      - ${GCLOUD_CONFIG_DIR:-./secrets/gcloud}:/root/.config/gcloud:ro
+      - ${GCLOUD_CONFIG_DIR:-./secrets/gcloud}:/root/.config/gcloud
     restart: on-failure
     profiles:
       - replay-raw
