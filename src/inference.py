@@ -259,20 +259,18 @@ class OnlineBinaryFeaturePipeline:
         xpad = np.pad(x, (self.pad, self.pad), mode="reflect")
         x = np.convolve(xpad, self.kernel, mode="valid").astype(np.float32)
 
-        # Vectorized sliding windows to avoid expensive per-window Python loops.
-        windows = np.lib.stride_tricks.sliding_window_view(x, self.win)[self.starts]
-        means = windows.mean(axis=1, dtype=np.float32)
-        variances = windows.var(axis=1, dtype=np.float32)
-        energy = np.sqrt(np.sum(windows * windows, axis=1, dtype=np.float32), dtype=np.float32)
-        energy_sigmoid = self._sigmoid(energy - self.b_thresh).astype(np.float32, copy=False)
-        feats = np.column_stack((means, variances, energy_sigmoid)).reshape(-1).astype(
-            np.float32, copy=False
-        )
-
-        if feats.shape[0] != self.feature_dim:
-            raise RuntimeError(
-                f"Feature dim mismatch: expected={self.feature_dim}, got={feats.shape[0]}"
-            )
+        feats = np.empty(self.feature_dim, dtype=np.float32)
+        j = 0
+        for s in self.starts:
+            w = x[s:s + self.win]
+            m = w.mean(dtype=np.float32)
+            v = ((w - m) ** 2).mean(dtype=np.float32)
+            energy = np.sqrt((w * w).sum(dtype=np.float32), dtype=np.float32)
+            es = self._sigmoid(energy - self.b_thresh)
+            feats[j] = m
+            feats[j + 1] = v
+            feats[j + 2] = es
+            j += 3
 
         feats = self.scaler.transform(feats.reshape(1, -1)).astype(np.float32)
         if self.pca is not None:
