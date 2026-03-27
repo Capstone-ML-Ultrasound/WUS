@@ -328,31 +328,29 @@ class OnlineFeaturePipeline:
         return np.convolve(xpad, self.kernel, mode="valid").astype(np.float32)
 
     def _extract_features(self, frame):
-        feats = np.empty(self.feature_dim, dtype=np.float32)
-        j = 0
+        # Vectorized sliding windows to avoid per-window Python overhead.
+        windows = np.lib.stride_tricks.sliding_window_view(frame, self.win)[self.starts]
+        parts = []
 
-        # Windows are across depth bins within one frame (not across time).
-        for s in self.starts:
-            w = frame[s:s + self.win]
+        if self.include_mean:
+            means = windows.mean(axis=1, dtype=np.float32)
+            parts.append(means)
+        if self.include_var:
+            variances = windows.var(axis=1, dtype=np.float32)
+            parts.append(variances)
+        if self.include_energy_sigmoid:
+            energy = np.sqrt(np.sum(windows * windows, axis=1, dtype=np.float32), dtype=np.float32)
+            energy_sigmoid = self._sigmoid(energy - self.b).astype(np.float32, copy=False)
+            parts.append(energy_sigmoid)
 
-            if self.include_mean or self.include_var:
-                m = w.mean(dtype=np.float32)
-            if self.include_var:
-                v = ((w - m) ** 2).mean(dtype=np.float32)
-            if self.include_energy_sigmoid:
-                energy = np.sqrt((w * w).sum(dtype=np.float32), dtype=np.float32)
-                es = self._sigmoid(energy - self.b)
+        if not parts:
+            raise ValueError("No features enabled.")
 
-            if self.include_mean:
-                feats[j] = m
-                j += 1
-            if self.include_var:
-                feats[j] = v
-                j += 1
-            if self.include_energy_sigmoid:
-                feats[j] = es
-                j += 1
-
+        feats = np.column_stack(parts).reshape(-1).astype(np.float32, copy=False)
+        if feats.shape[0] != self.feature_dim:
+            raise RuntimeError(
+                f"Feature dim mismatch: expected={self.feature_dim}, got={feats.shape[0]}"
+            )
         return feats
 
     def transform_frame_to_model_input(self, frame):
@@ -746,13 +744,16 @@ class LiveKafkaInferenceWorker:
 
                 self.total_frames += 1
                 if self.total_frames % self.log_every == 0:
+                    source_age_ms = (time.time_ns() - int(envelope.timestamp_ns)) / 1_000_000.0
                     pred_str = "None" if pred is None else f"{pred:.6f}"
                     infer_str = "None" if infer_ms is None else f"{infer_ms:.3f}"
                     print(
                         "[WristInference] "
                         f"frames={self.total_frames} "
+                        f"seq={envelope.sequence_number} "
                         f"pred={pred_str} "
                         f"infer_ms={infer_str} "
+                        f"source_age_ms={source_age_ms:.1f} "
                         f"calib_n={self.calibration.calibration_n} "
                         f"frozen={self.calibration.is_frozen}"
                     )

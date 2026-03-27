@@ -106,6 +106,7 @@ Replay raw (`replay_raw_service`):
 Shared cloud auth:
 - `GCP_PROJECT_ID`
 - `GOOGLE_APPLICATION_CREDENTIALS` (container path; repo mounts `./secrets:/app/secrets:ro`)
+- `GCLOUD_CONFIG_DIR` (optional host path mounted to `/root/.config/gcloud`; default: `./secrets/gcloud`)
 
 ## Producer (Host Machine)
 
@@ -113,7 +114,16 @@ The producer must run on the host to access USB/serial hardware.
 
 ```bash
 make us_acq
-./us_acq.exe
+./us_acq
+```
+
+On Windows, run `./us_acq.exe`.  
+If your serial device path differs, use `US_SERIAL_PORT` or `--port`:
+
+```bash
+US_SERIAL_PORT=/dev/tty.usbmodemXXXX ./us_acq
+# or
+./us_acq --port /dev/tty.usbmodemXXXX
 ```
 
 ## Local Build (No Docker)

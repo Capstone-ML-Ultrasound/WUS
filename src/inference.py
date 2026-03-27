@@ -259,18 +259,20 @@ class OnlineBinaryFeaturePipeline:
         xpad = np.pad(x, (self.pad, self.pad), mode="reflect")
         x = np.convolve(xpad, self.kernel, mode="valid").astype(np.float32)
 
-        feats = np.empty(self.feature_dim, dtype=np.float32)
-        j = 0
-        for s in self.starts:
-            w = x[s:s + self.win]
-            m = w.mean(dtype=np.float32)
-            v = ((w - m) ** 2).mean(dtype=np.float32)
-            energy = np.sqrt((w * w).sum(dtype=np.float32), dtype=np.float32)
-            es = self._sigmoid(energy - self.b_thresh)
-            feats[j] = m
-            feats[j + 1] = v
-            feats[j + 2] = es
-            j += 3
+        # Vectorized sliding windows to avoid expensive per-window Python loops.
+        windows = np.lib.stride_tricks.sliding_window_view(x, self.win)[self.starts]
+        means = windows.mean(axis=1, dtype=np.float32)
+        variances = windows.var(axis=1, dtype=np.float32)
+        energy = np.sqrt(np.sum(windows * windows, axis=1, dtype=np.float32), dtype=np.float32)
+        energy_sigmoid = self._sigmoid(energy - self.b_thresh).astype(np.float32, copy=False)
+        feats = np.column_stack((means, variances, energy_sigmoid)).reshape(-1).astype(
+            np.float32, copy=False
+        )
+
+        if feats.shape[0] != self.feature_dim:
+            raise RuntimeError(
+                f"Feature dim mismatch: expected={self.feature_dim}, got={feats.shape[0]}"
+            )
 
         feats = self.scaler.transform(feats.reshape(1, -1)).astype(np.float32)
         if self.pca is not None:
@@ -603,10 +605,13 @@ class LiveKafkaBinaryInferenceWorker:
                     )
                     print(f"{line_color}{line}{ANSI_RESET}", flush=True)
                 elif self.total_frames % self.log_every == 0:
+                    source_age_ms = (time.time_ns() - int(envelope.timestamp_ns)) / 1_000_000.0
                     print(
                         "[BinaryInference] "
                         f"frames={self.total_frames} "
+                        f"seq={envelope.sequence_number} "
                         f"last_raw_prob={model_probability:.6f} "
+                        f"source_age_ms={source_age_ms:.1f} "
                         f"errors={self.total_errors}",
                         flush=True,
                     )

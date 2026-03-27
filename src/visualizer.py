@@ -34,6 +34,7 @@ class ModelPrediction:
     flexion: float
     up_down: float
     ready: bool
+    source_sequence: Optional[int] = None
     source_ts_ns: Optional[int] = None
     prediction_ts_ns: Optional[int] = None
 
@@ -143,6 +144,7 @@ def decode_prediction(payload: bytes) -> Optional[ModelPrediction]:
         flexion=flexion_value,
         up_down=up_down,
         ready=ready,
+        source_sequence=_to_optional_int(obj.get("source_sequence")),
         source_ts_ns=_to_optional_int(obj.get("source_ts_ns")),
         prediction_ts_ns=_to_optional_int(obj.get("prediction_ts_ns")),
     )
@@ -348,6 +350,7 @@ def main():
                 log(
                     "[Visualizer] "
                     f"frame={seen} ready={int(pred.ready)} "
+                    f"seq={pred.source_sequence} "
                     f"vec=[{pred.hand_state:.1f},{pred.flexion:.1f},{pred.up_down:.1f}] "
                     f"raw_dx={raw_dx:.2f} smooth_dx={smoothed_dx:.2f} "
                     f"lat_e2e_ms={_fmt_ms(e2e_ms)} "

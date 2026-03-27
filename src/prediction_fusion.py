@@ -255,6 +255,13 @@ class PredictionFusionWorker:
                 self.pending.pop(sequence, None)
             self.total_expired += to_drop
 
+    def _oldest_pending_age_ms(self) -> float:
+        if not self.pending:
+            return 0.0
+        now_ns = time.time_ns()
+        oldest_ns = min(item.first_seen_ns for item in self.pending.values())
+        return max(0.0, float(now_ns - oldest_ns) / 1_000_000.0)
+
     def run(self) -> None:
         consumer = Consumer(
             {
@@ -340,6 +347,7 @@ class PredictionFusionWorker:
                         f"seen={self.total_seen} "
                         f"emitted={self.total_emitted} "
                         f"pending={len(self.pending)} "
+                        f"oldest_pending_ms={self._oldest_pending_age_ms():.1f} "
                         f"expired={self.total_expired} "
                         f"errors={self.total_errors}",
                         flush=True,

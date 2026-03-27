@@ -38,7 +38,7 @@ RUN apt-get update && apt-get install -y \
 RUN python3 -m pip install --no-cache-dir \
     numpy==2.2.6 \
     joblib==1.5.1 \
-    scikit-learn==1.7.2 \
+    scikit-learn==1.8.0 \
     xgboost==3.0.5 \
     confluent-kafka==2.12.2
 

@@ -197,7 +197,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./secrets:/app/secrets:ro
-      - ${APPDATA}/gcloud:/root/.config/gcloud:ro
+      - ${GCLOUD_CONFIG_DIR:-./secrets/gcloud}:/root/.config/gcloud:ro
     restart: on-failure
     profiles:
       - testing
@@ -224,7 +224,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./secrets:/app/secrets:ro
-      - ${APPDATA}/gcloud:/root/.config/gcloud:ro
+      - ${GCLOUD_CONFIG_DIR:-./secrets/gcloud}:/root/.config/gcloud:ro
     restart: on-failure
     profiles:
       - replay-raw

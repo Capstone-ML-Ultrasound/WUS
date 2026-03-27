@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <unistd.h>
 #include <signal.h> // For Ctrl+C handling
@@ -76,12 +77,64 @@ int getNonNegativeEnvInt(const char* name, int fallback) {
   }
 }
 
+std::string getEnvOrDefault(const char* name, const std::string& fallback = "") {
+  const char* raw = std::getenv(name);
+  if (!raw) return fallback;
+  const std::string value(raw);
+  return value.empty() ? fallback : value;
+}
+
+#if defined(__APPLE__)
+std::string detectMacSerialPort() {
+  namespace fs = std::filesystem;
+  const fs::path devPath("/dev");
+  const std::vector<std::string> prefixes = {
+      "tty.usbmodem",
+      "cu.usbmodem",
+      "tty.usbserial",
+      "cu.usbserial",
+  };
+
+  std::error_code ec;
+  if (!fs::exists(devPath, ec)) {
+    return "";
+  }
+
+  std::vector<std::string> matches;
+  for (const auto& entry : fs::directory_iterator(devPath, ec)) {
+    if (ec || !entry.is_character_file(ec)) continue;
+    const std::string name = entry.path().filename().string();
+    for (const auto& prefix : prefixes) {
+      if (name.rfind(prefix, 0) == 0) {
+        matches.push_back(entry.path().string());
+        break;
+      }
+    }
+  }
+
+  if (matches.empty()) return "";
+  std::sort(matches.begin(), matches.end());
+  return matches.front();
+}
+#endif
+
 std::string getDefaultPort() {
+  const std::string envPort = getEnvOrDefault("US_SERIAL_PORT");
+  if (!envPort.empty()) {
+    return envPort;
+  }
+
 #ifdef _WIN32
   return "\\\\.\\COM4";
 #elif __APPLE__
-  return "/dev/tty.usbmodem11101"; // (TO CHECK) ls /dev | grep tty.usb
+  const std::string detected = detectMacSerialPort();
+  if (!detected.empty()) {
+    return detected;
+  }
+  return "/dev/tty.usbmodem11101";
 #else
+  if (std::filesystem::exists("/dev/ttyUSB0")) return "/dev/ttyUSB0";
+  if (std::filesystem::exists("/dev/ttyACM0")) return "/dev/ttyACM0";
   return "/dev/ttyUSB0";
 #endif
 }
@@ -291,6 +344,7 @@ int main(int argc, char* argv[]) {
   int freq = 80;
   double filter_mhz = -1;  // no filter
   int compression = 1;    // no compression
+  std::string portName = getDefaultPort();
 
   // 2. Parse Command Line Arguments
   static struct option long_options[] = {
@@ -299,12 +353,13 @@ int main(int argc, char* argv[]) {
       {"help",  no_argument, 0, 'h'},
       {"filter", required_argument, 0, 'm'},
       {"compression", required_argument, 0, 'c'},
+      {"port", required_argument, 0, 'p'},
       {0, 0, 0, 0}
   };
 
   int opt;
   int option_index = 0;
-  while ((opt = getopt_long(argc, argv, "d:f:m:c:h", long_options, &option_index)) != -1) {
+  while ((opt = getopt_long(argc, argv, "d:f:m:c:p:h", long_options, &option_index)) != -1) {
       switch (opt) {
           case 'd':
               depth = std::stoi(optarg);
@@ -318,12 +373,16 @@ int main(int argc, char* argv[]) {
           case 'c':
               compression = std::stoi(optarg);
               break;
+          case 'p':
+              portName = optarg;
+              break;
           case 'h':
               std::cout << "Usage: " << argv[0] << " [--depth <n>] [--freq <n>]\n"
                         << "  --depth, -d        Number of samples to capture (max 4090)\n"
                         << "  --freq,  -f        Sampling frequency in MHz (160, 80, 40, 20)\n"
                         << "  --filter, -m       Filter (1.25, 2.5, 5, 10, -1)\n"
                         << "  --compression, -c  Compression factor (0, 1, 2, 3)\n"
+                        << "  --port, -p         Serial port (or set US_SERIAL_PORT)\n"
                         << "  --help,  -h        Display this help message" << std::endl;
               return 0;
           default:
@@ -355,8 +414,7 @@ int main(int argc, char* argv[]) {
   // Set up Ctrl+C handler
   signal(SIGINT, signalHandler);
 
-  // Platform-specific port selection
-  std::string portName = getDefaultPort();
+  // Platform-specific port selection (or CLI/env override)
   std::cout << "Using port: " << portName << std::endl;
   std::cout << "Configuration: Depth=" << depth
             << ", Freq=" << freq
