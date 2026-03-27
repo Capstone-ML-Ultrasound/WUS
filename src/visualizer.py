@@ -112,26 +112,6 @@ def _fmt_ms(value: Optional[float]) -> str:
     return f"{value:.1f}"
 
 
-def _label_to_closed_state(label: Optional[str]) -> Optional[bool]:
-    if label is None:
-        return None
-    normalized = label.strip().lower()
-    if "hand_closed" in normalized or normalized == "closed":
-        return True
-    if "hand_open" in normalized or normalized == "open":
-        return False
-    return None
-
-
-def _is_hand_closed(pred: "ModelPrediction", closed_when_high: bool = True) -> bool:
-    label_state = _label_to_closed_state(pred.label)
-    if label_state is not None:
-        return label_state
-    if closed_when_high:
-        return pred.hand_state > 0.5
-    return pred.hand_state <= 0.5
-
-
 def decode_prediction(payload: bytes) -> Optional[ModelPrediction]:
     try:
         obj = json.loads(payload.decode("utf-8"))
@@ -199,7 +179,15 @@ class GuiRenderer:
         cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
 
     def _is_hand_closed(self, pred: ModelPrediction) -> bool:
-        return _is_hand_closed(pred, closed_when_high=self.closed_when_high)
+        if pred.label is not None:
+            label = pred.label.strip().lower()
+            if "hand_closed" in label or label == "closed":
+                return True
+            if "hand_open" in label or label == "open":
+                return False
+        if self.closed_when_high:
+            return pred.hand_state > 0.5
+        return pred.hand_state <= 0.5
 
     def render(
         self,
@@ -390,13 +378,7 @@ def main():
 
             seen += 1
             raw_dx = flexion_to_speed(pred.flexion)
-            hand_closed = _is_hand_closed(pred, closed_when_high=hand_closed_when_high)
-            if hand_closed:
-                # Hard stop: no horizontal carry-over while hand is closed.
-                raw_dx = 0.0
-                smoothed_dx = 0.0
-            else:
-                smoothed_dx = (SMOOTHING_ALPHA * smoothed_dx) + ((1.0 - SMOOTHING_ALPHA) * raw_dx)
+            smoothed_dx = (SMOOTHING_ALPHA * smoothed_dx) + ((1.0 - SMOOTHING_ALPHA) * raw_dx)
             now_ns = time.time_ns()
             e2e_ms = _latency_ms(now_ns, pred.source_ts_ns)
             model_ms = _latency_ms(pred.prediction_ts_ns, pred.source_ts_ns)
