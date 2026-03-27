@@ -34,6 +34,7 @@ class ModelPrediction:
     flexion: float
     up_down: float
     ready: bool
+    label: Optional[str] = None
     source_sequence: Optional[int] = None
     source_ts_ns: Optional[int] = None
     prediction_ts_ns: Optional[int] = None
@@ -129,14 +130,20 @@ def decode_prediction(payload: bytes) -> Optional[ModelPrediction]:
     except (TypeError, ValueError):
         return None
 
-    hand_state_raw = obj.get("hand_state", 1.0 if ready else 0.0)
+    hand_state_raw = obj.get("hand_state")
+    label_raw = obj.get("label")
+    label = str(label_raw) if label_raw is not None else None
     up_down_raw = obj.get("up_down", 0.0)
 
     try:
-        hand_state = float(hand_state_raw)
+        if hand_state_raw is None:
+            # Conservative fallback: treat missing hand state as open hand.
+            hand_state = 0.0
+        else:
+            hand_state = float(hand_state_raw)
         up_down = float(up_down_raw)
     except (TypeError, ValueError):
-        hand_state = 1.0 if ready else 0.0
+        hand_state = 0.0
         up_down = 0.0
 
     return ModelPrediction(
@@ -144,6 +151,7 @@ def decode_prediction(payload: bytes) -> Optional[ModelPrediction]:
         flexion=flexion_value,
         up_down=up_down,
         ready=ready,
+        label=label,
         source_sequence=_to_optional_int(obj.get("source_sequence")),
         source_ts_ns=_to_optional_int(obj.get("source_ts_ns")),
         prediction_ts_ns=_to_optional_int(obj.get("prediction_ts_ns")),
@@ -151,12 +159,13 @@ def decode_prediction(payload: bytes) -> Optional[ModelPrediction]:
 
 
 class GuiRenderer:
-    def __init__(self):
+    def __init__(self, closed_when_high: bool = True):
         import cv2  # local import so headless mode does not require opencv
         import numpy as np
 
         self.cv2 = cv2
         self.np = np
+        self.closed_when_high = bool(closed_when_high)
 
         self.width = 1000
         self.height = 700
@@ -168,6 +177,17 @@ class GuiRenderer:
         self.roll_phase = 0.0
 
         cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
+
+    def _is_hand_closed(self, pred: ModelPrediction) -> bool:
+        if pred.label is not None:
+            label = pred.label.strip().lower()
+            if "hand_closed" in label or label == "closed":
+                return True
+            if "hand_open" in label or label == "open":
+                return False
+        if self.closed_when_high:
+            return pred.hand_state > 0.5
+        return pred.hand_state <= 0.5
 
     def render(
         self,
@@ -181,7 +201,7 @@ class GuiRenderer:
         cv2 = self.cv2
         np = self.np
 
-        hand_closed = pred.hand_state > 0.5
+        hand_closed = self._is_hand_closed(pred)
         effective_dx = 0.0 if hand_closed else float(smoothed_dx)
 
         prev_x = self.pos_x
@@ -303,6 +323,7 @@ def main():
     group_id = _env_or_default("CONSUMER_GROUP_ID", GROUP_ID_DEFAULT)
     log_every = max(1, _env_int("VISUALIZER_LOG_EVERY", 10))
     request_gui = _env_bool("VISUALIZER_GUI", False)
+    hand_closed_when_high = _env_bool("VISUALIZER_HAND_CLOSED_WHEN_HIGH", True)
 
     consumer = Consumer(
         {
@@ -318,7 +339,7 @@ def main():
     gui = None
     if request_gui:
         try:
-            gui = GuiRenderer()
+            gui = GuiRenderer(closed_when_high=hand_closed_when_high)
             log("[Visualizer] GUI mode enabled.")
         except Exception as exc:
             log(
