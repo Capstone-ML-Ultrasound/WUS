@@ -3,3 +3,4 @@ build/
 kafka_data/
 *.exe
 data/
+src/__pycache__/

@@ -161,9 +161,11 @@ class GuiRenderer:
         self.width = 1000
         self.height = 700
         self.header_height = 90
-        self.canvas = np.full((self.height, self.width, 3), 255, dtype=np.uint8)
+        self.base_bg = np.full((self.height, self.width, 3), 245, dtype=np.uint8)
         self.pos_x = self.width / 2.0
         self.pos_y = self.header_height + (self.height - self.header_height) / 2.0
+        self.ball_radius = 28
+        self.roll_phase = 0.0
 
         cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
 
@@ -177,29 +179,24 @@ class GuiRenderer:
         post_model_ms: Optional[float],
     ) -> bool:
         cv2 = self.cv2
+        np = self.np
 
-        prev_x, prev_y = self.pos_x, self.pos_y
-        self.pos_x += float(smoothed_dx)
+        hand_closed = pred.hand_state > 0.5
+        effective_dx = 0.0 if hand_closed else float(smoothed_dx)
+
+        prev_x = self.pos_x
+        self.pos_x += effective_dx
         self.pos_y += float(pred.up_down)
 
-        self.pos_x = max(0.0, min(self.pos_x, float(self.width - 1)))
-        self.pos_y = max(float(self.header_height), min(self.pos_y, float(self.height - 1)))
+        self.pos_x = max(float(self.ball_radius), min(self.pos_x, float(self.width - 1 - self.ball_radius)))
+        self.pos_y = max(
+            float(self.header_height + self.ball_radius),
+            min(self.pos_y, float(self.height - 1 - self.ball_radius)),
+        )
 
-        pen_down = pred.hand_state > 0.5
-        if pen_down:
-            cv2.line(
-                self.canvas,
-                (int(prev_x), int(prev_y)),
-                (int(self.pos_x), int(self.pos_y)),
-                (0, 0, 200),
-                3,
-                cv2.LINE_AA,
-            )
-
-        display = self.canvas.copy()
-
-        cursor_color = (0, 0, 255) if pen_down else (80, 80, 255)
-        cv2.circle(display, (int(self.pos_x), int(self.pos_y)), 6, cursor_color, -1)
+        # Simulate a rolling phase based on travelled horizontal distance.
+        self.roll_phase += (self.pos_x - prev_x) / max(1.0, self.ball_radius)
+        display = self.base_bg.copy()
 
         cv2.rectangle(display, (0, 0), (self.width, self.header_height), (30, 30, 30), -1)
         cv2.line(
@@ -210,8 +207,8 @@ class GuiRenderer:
             2,
         )
 
-        state_str = "STATE: PEN DOWN" if pen_down else "STATE: HOVERING"
-        state_color = (80, 80, 255) if pen_down else (200, 200, 200)
+        state_str = "STATE: CLOSED HAND" if hand_closed else "STATE: OPEN HAND"
+        state_color = (80, 80, 255) if hand_closed else (200, 200, 200)
         cv2.putText(
             display,
             state_str,
@@ -237,14 +234,37 @@ class GuiRenderer:
         bar_color = (255, 120, 0) if pred.flexion < 0 else (0, 220, 100)
         cv2.circle(display, (bar_x, self.header_height - 12), 6, bar_color, -1)
 
+        # Lightweight parallax motion for ground markers.
+        parallax_shift = int(self.roll_phase * 26.0)
+        ground_top = self.height - 120
+        cv2.rectangle(display, (0, ground_top), (self.width, self.height), (230, 230, 230), -1)
+        stripe_spacing = 80
+        for i in range(-2, (self.width // stripe_spacing) + 3):
+            x0 = (i * stripe_spacing + parallax_shift) % (self.width + stripe_spacing) - stripe_spacing
+            cv2.rectangle(display, (x0, ground_top), (x0 + 28, self.height), (218, 218, 218), -1)
+
+        ball_center = (int(self.pos_x), int(self.pos_y))
+        ball_color = (40, 90, 235) if hand_closed else (40, 130, 250)
+        cv2.circle(display, ball_center, self.ball_radius, ball_color, -1, cv2.LINE_AA)
+        cv2.circle(display, (ball_center[0] - 10, ball_center[1] - 10), 9, (180, 220, 255), -1, cv2.LINE_AA)
+
+        # Rolling accent lines, rotated by the current phase to suggest spin.
+        for angle_base in (0.0, 2.1):
+            angle = self.roll_phase + angle_base
+            x1 = int(ball_center[0] + np.cos(angle) * self.ball_radius * 0.9)
+            y1 = int(ball_center[1] + np.sin(angle) * self.ball_radius * 0.35)
+            x2 = int(ball_center[0] - np.cos(angle) * self.ball_radius * 0.9)
+            y2 = int(ball_center[1] - np.sin(angle) * self.ball_radius * 0.35)
+            cv2.line(display, (x1, y1), (x2, y2), (245, 245, 255), 2, cv2.LINE_AA)
+
         info = (
             f"VEC[{pred.hand_state:.1f} | flex={pred.flexion:.1f} | ud={pred.up_down:.1f}] "
-            f"dx={smoothed_dx:.2f} frame={frame_idx}"
+            f"dx={effective_dx:.2f} frame={frame_idx}"
         )
         cv2.putText(
             display,
             info,
-            (20, 68),
+            (20, self.header_height + 26),
             cv2.FONT_HERSHEY_PLAIN,
             0.95,
             (0, 220, 220),
@@ -259,7 +279,7 @@ class GuiRenderer:
         cv2.putText(
             display,
             latency_info,
-            (20, 84),
+            (20, self.header_height + 44),
             cv2.FONT_HERSHEY_PLAIN,
             0.95,
             (120, 240, 120),
